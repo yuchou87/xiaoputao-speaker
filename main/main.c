@@ -17,24 +17,9 @@
 #include "bsp_wifi.h"
 #include "bsp_prov.h"
 #include "voice_app.h"
+#include "ui.h"
 
 static const char *TAG = "xpt";
-
-/* ---------- UI status label ---------- */
-
-static lv_obj_t *s_status_label = NULL;
-
-/*
- * ui_set_status() — non-static so it overrides the weak stub in voice_app at
- * link time.  Safe to call from any task after bsp_lvgl_init().
- */
-void ui_set_status(const char *s)
-{
-    if (!s_status_label) return;
-    bsp_lvgl_lock();
-    lv_label_set_text(s_status_label, s);
-    bsp_lvgl_unlock();
-}
 
 /* ---------- I2C scan (optional, kept for debug) ---------- */
 
@@ -83,14 +68,9 @@ void app_main(void)
     Touch_Init();
     Touch_LVGL_Init();
 
-    /* ---- 2. Create status label ---- */
-    bsp_lvgl_lock();
-    s_status_label = lv_label_create(lv_scr_act());
-    lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_status_label, lv_pct(85));
-    lv_obj_align(s_status_label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(s_status_label, "启动中");
-    bsp_lvgl_unlock();
+    /* ---- 2. Conversation-state UI ---- */
+    ui_init();
+    ui_set_state(UI_BOOT);
 
     /* ---- Audio init ---- */
     if (bsp_audio_init() != ESP_OK) {
@@ -106,13 +86,15 @@ void app_main(void)
 
     if (!bsp_nvs_has(NVS_KEY_WIFI_SSID) || strlen(ssid) == 0) {
         /* No credentials — start captive-portal provisioning */
-        ui_set_status("配网: 连 XiaoPuTao-Setup\n浏览器开 192.168.4.1");
+        ui_set_state(UI_PROVISION);
+        ui_set_status("Join AP: XiaoPuTao-Setup\nOpen 192.168.4.1");
         ESP_LOGI(TAG, "no WiFi creds, starting SoftAP provisioning");
         bsp_prov_start_softap();   /* blocks until form submitted */
         esp_restart();
     } else {
         /* Have credentials — try to connect */
-        ui_set_status("连接 WiFi...");
+        ui_set_state(UI_CONNECTING);
+        ui_set_status("Connecting WiFi...");
         ESP_ERROR_CHECK(bsp_wifi_init());
 
         char pass[65]  = {0};
@@ -129,16 +111,18 @@ void app_main(void)
             bsp_wifi_get_ip(ip, sizeof(ip));
 
             char status_buf[64];
-            snprintf(status_buf, sizeof(status_buf), "已连接\n%s", ip);
+            snprintf(status_buf, sizeof(status_buf), "Connected\n%s", ip);
             ui_set_status(status_buf);
             ESP_LOGI(TAG, "WiFi connected, IP: %s", ip);
 
             esp_err_t va = voice_app_start();
             if (va == ESP_OK) {
-                ui_set_status("待命 (说: 你好小智)");
+                ui_set_state(UI_IDLE);
+                ui_set_status("say: Ni Hao Xiao Zhi");
             } else {
                 ESP_LOGE(TAG, "voice_app_start failed: %s", esp_err_to_name(va));
-                ui_set_status("语音初始化失败");
+                ui_set_state(UI_ERROR);
+                ui_set_status("voice init failed");
             }
         } else {
             ESP_LOGE(TAG, "WiFi connect failed: %s", esp_err_to_name(r));
@@ -156,11 +140,13 @@ void app_main(void)
                 bsp_nvs_set_str(NVS_KEY_WIFI_SSID, "");
                 bsp_nvs_set_str(NVS_KEY_WIFI_PASS, "");
                 bsp_nvs_set_str("wifi_fails", "0");
-                ui_set_status("WiFi 多次失败,重新配网");
+                ui_set_state(UI_ERROR);
+                ui_set_status("WiFi failed, reconfiguring");
                 ESP_LOGW(TAG, "clearing WiFi creds, will reprovision on next boot");
                 vTaskDelay(pdMS_TO_TICKS(2000));
             } else {
-                ui_set_status("WiFi 失败,重启中...");
+                ui_set_state(UI_ERROR);
+                ui_set_status("WiFi failed, restarting...");
                 vTaskDelay(pdMS_TO_TICKS(3000));
             }
             esp_restart();

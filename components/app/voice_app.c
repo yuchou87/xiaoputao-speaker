@@ -3,6 +3,7 @@
 #include "bsp_sr.h"
 #include "glm_realtime.h"
 #include "glm_audio_out.h"
+#include "ui.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,12 +19,6 @@
 #include <stdint.h>
 
 static const char *TAG = "voice_app";
-
-/*
- * Weak UI hook. T4 provides the real ui_set_status(); until then this links as
- * a no-op so transitions can call it unconditionally.
- */
-__attribute__((weak)) void ui_set_status(const char *s) { (void)s; }
 
 /* ---- Conversation state ---------------------------------------------------- */
 
@@ -83,13 +78,18 @@ static TaskHandle_t        s_downlink_task = NULL;
 
 /* ---- State transitions ----------------------------------------------------- */
 
-static void set_state(voice_state_t next, const char *ui)
+static void set_state(voice_state_t next)
 {
     if (s_state != next) {
         s_state = next;
-        ESP_LOGI(TAG, "state -> %s", ui);
+        ESP_LOGI(TAG, "state -> %d", next);
     }
-    ui_set_status(ui);
+    switch (next) {
+        case VOICE_LISTENING: ui_set_state(UI_LISTENING); break;
+        case VOICE_SPEAKING:  ui_set_state(UI_SPEAKING);  break;
+        case VOICE_IDLE:
+        default:              ui_set_state(UI_IDLE);       break;
+    }
 }
 
 /* ---- Callbacks ------------------------------------------------------------- */
@@ -104,7 +104,7 @@ static void on_wake(void)
     ESP_LOGI(TAG, "wake detected");
     s_last_activity_us = esp_timer_get_time();
     bsp_sr_set_streaming(true);
-    set_state(VOICE_LISTENING, "聆听");
+    set_state(VOICE_LISTENING);
 }
 
 /* Runs on the bsp_sr feed task. Copy + enqueue, never block. */
@@ -166,7 +166,7 @@ static void audio_out_wrapper(const uint8_t *pcm16, size_t len)
     }
 
     if (s_state != VOICE_SPEAKING) {
-        set_state(VOICE_SPEAKING, "说话");
+        set_state(VOICE_SPEAKING);
     }
     s_last_activity_us = esp_timer_get_time();
 
@@ -209,21 +209,25 @@ static void on_glm_event(const char *type)
     }
 
     if (strcmp(type, "_ws_connected") == 0) {
-        ui_set_status("已连接云端");
+        ui_set_state(UI_IDLE);
+        ui_set_status("backend online");
     } else if (strcmp(type, "_ws_disconnected") == 0) {
-        ui_set_status("重连中...");
+        ui_set_state(UI_CONNECTING);
+        ui_set_status("reconnecting...");
     } else if (strcmp(type, "input_audio_buffer.speech_started") == 0) {
         s_last_activity_us = esp_timer_get_time();
-        set_state(VOICE_LISTENING, "聆听");
+        set_state(VOICE_LISTENING);
+    } else if (strcmp(type, "input_audio_buffer.speech_stopped") == 0) {
+        ui_set_state(UI_THINKING);   /* server processing, reply pending */
     } else if (strcmp(type, "response.audio.done") == 0 ||
                strcmp(type, "response.done") == 0) {
         /* One question -> one answer per wake. Either terminal event ends the
          * turn: stop streaming, return to IDLE. */
         bsp_sr_set_streaming(false);
-        set_state(VOICE_IDLE, "待命");
+        set_state(VOICE_IDLE);
     } else if (strcmp(type, "error") == 0) {
         ESP_LOGE(TAG, "GLM error event");
-        ui_set_status("云端错误");
+        ui_set_state(UI_ERROR);
     } else {
         ESP_LOGD(TAG, "GLM event: %s", type);
     }
@@ -244,7 +248,7 @@ static void watchdog_task(void *arg)
                 ESP_LOGW(TAG, "turn timeout (%s), returning to IDLE",
                          s_state == VOICE_LISTENING ? "listening" : "speaking");
                 bsp_sr_set_streaming(false);
-                set_state(VOICE_IDLE, "待命");
+                set_state(VOICE_IDLE);
             }
         }
     }
@@ -313,7 +317,7 @@ esp_err_t voice_app_start(void)
         return err;
     }
 
-    set_state(VOICE_IDLE, "待命");
+    set_state(VOICE_IDLE);
     ESP_LOGI(TAG, "voice app ready (IDLE)");
     return ESP_OK;
 }

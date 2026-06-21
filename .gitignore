@@ -13,3 +13,4 @@ secrets.*
 !secrets.example.h
 *.pem
 *.key
+.superpowers/
