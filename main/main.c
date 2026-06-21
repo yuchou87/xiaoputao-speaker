@@ -94,12 +94,10 @@ void app_main(void)
 
     // Audio out: ES8311 + I2S. Play a 1 kHz test tone at boot. Non-fatal.
     if (bsp_audio_init() == ESP_OK) {
+        // Prepare a short 1kHz buffer used only as the wake-ack beep (no boot tone).
         for (int i = 0; i < 16000; i++) {
             s_tone[i] = (int16_t) (2000.0f * sinf(2.0f * (float) M_PI * 1000.0f * i / 16000.0f));
         }
-        ESP_LOGI(TAG, "playing 1kHz test tone x2");
-        for (int k = 0; k < 2; k++) bsp_audio_play(s_tone, 16000);
-        ESP_LOGI(TAG, "tone done");
 
         // Loopback: record 3s from ES7210 mic, then play it back on ES8311.
         size_t n = 16000 * 3;
