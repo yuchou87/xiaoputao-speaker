@@ -418,11 +418,13 @@ esp_err_t glm_rt_send_audio(const int16_t *pcm16, size_t samples)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Tolerate WiFi jitter: too short a timeout makes the transport write time
-     * out, which esp_websocket_client escalates to a fatal error + disconnect.
-     * 1s is well within realtime tolerance while the backend drains continuously. */
+    /* Tolerate WiFi jitter: a transport-write timeout makes esp_websocket_client
+     * escalate to a fatal error + disconnect, losing the whole turn. Intermittent
+     * WiFi TX stalls of 1-2s do happen, so ride them out with a generous timeout
+     * rather than tearing the connection down. The device VAD ends the turn, so
+     * the uplink task won't block on this for long. */
     int sent = esp_websocket_client_send_text(s_client, json_str, strlen(json_str),
-                                              pdMS_TO_TICKS(1000));
+                                              pdMS_TO_TICKS(3000));
     free(json_str);
 
     if (sent < 0) {
