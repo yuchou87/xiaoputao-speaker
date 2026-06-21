@@ -5,6 +5,8 @@
 #include "bsp_i2c.h"
 #include "bsp_exio.h"
 #include "st77916_panel.h"
+#include "bsp_lvgl.h"
+#include "lvgl.h"
 
 static const char *TAG = "xpt";
 
@@ -42,4 +44,14 @@ void app_main(void)
     // pattern (test_draw_bitmap) so we can confirm the panel lights up.
     LCD_Init();
     ESP_LOGI(TAG, "LCD init done (color bars should be visible)");
+
+    // LVGL on top of the panel: draw a centered label.
+    ESP_ERROR_CHECK(bsp_lvgl_init());
+    bsp_lvgl_lock();
+    lv_obj_t *label = lv_label_create(lv_scr_act());
+    lv_label_set_text(label, "XiaoPuTao P0\nLVGL OK");
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(label);
+    bsp_lvgl_unlock();
+    ESP_LOGI(TAG, "LVGL label shown");
 }
