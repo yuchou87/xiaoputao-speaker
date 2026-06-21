@@ -230,15 +230,25 @@ static void downlink_task(void *arg)
 {
     (void)arg;
     bool playing = false;
+    int  prebuf_ms = 0;     /* time spent waiting on the current prebuffer */
     for (;;) {
         if (!playing) {
-            /* Wait until enough audio is buffered to ride out jitter. */
+            /* Wait until enough audio is buffered to ride out jitter -- but don't
+             * stall forever: a reply shorter than the prebuffer target would never
+             * reach it. Once any audio is present, start after at most ~1.5s. */
             size_t fill = DOWNLINK_RB_BYTES - xRingbufferGetCurFreeSize(s_downlink_rb);
-            if (fill < DOWNLINK_PREBUF_BYTES) {
+            if (fill == 0) {
+                prebuf_ms = 0;             /* nothing yet; keep waiting fresh */
+                vTaskDelay(pdMS_TO_TICKS(15));
+                continue;
+            }
+            if (fill < DOWNLINK_PREBUF_BYTES && prebuf_ms < 1500) {
+                prebuf_ms += 15;
                 vTaskDelay(pdMS_TO_TICKS(15));
                 continue;
             }
             playing = true;
+            prebuf_ms = 0;
         }
         size_t n = 0;
         uint8_t *bytes = (uint8_t *)xRingbufferReceiveUpTo(
