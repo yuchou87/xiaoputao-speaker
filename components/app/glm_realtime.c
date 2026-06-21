@@ -144,6 +144,7 @@ static void send_session_update(esp_websocket_client_handle_t client)
     cJSON_AddStringToObject(session, "model",               "glm-realtime");
     cJSON_AddStringToObject(session, "input_audio_format",  "pcm16");
     cJSON_AddStringToObject(session, "output_audio_format", "pcm");
+    cJSON_AddStringToObject(session, "voice",               "tongtong");  // required per GLM doc
 
     cJSON_AddItemToArray(modalities, cJSON_CreateString("text"));
     cJSON_AddItemToArray(modalities, cJSON_CreateString("audio"));
@@ -154,6 +155,11 @@ static void send_session_update(esp_websocket_client_handle_t client)
     cJSON_AddBoolToObject(vad, "interrupt_response",  true);
     cJSON_AddNumberToObject(vad, "silence_duration_ms", 500);
     cJSON_AddItemToObject(session, "turn_detection", vad);
+
+    // beta_fields is required per GLM doc; chat_mode "audio" = voice-only call.
+    cJSON *beta = cJSON_CreateObject();
+    cJSON_AddStringToObject(beta, "chat_mode", "audio");
+    cJSON_AddItemToObject(session, "beta_fields", beta);
 
     cJSON_AddItemToObject(root, "session", session);
 
