@@ -301,12 +301,15 @@ esp_err_t glm_rt_start(void)
     if (url[0] == '\0') {
         strlcpy(url, GLM_DEFAULT_URL, sizeof(url));
     }
-    ESP_LOGI(TAG, "connecting to %s", url);
+    bool is_tls = (strncmp(url, "wss://", 6) == 0);
+    ESP_LOGI(TAG, "connecting to %s (%s)", url, is_tls ? "TLS" : "plain");
 
     /* --- Configure WebSocket client --- */
+    /* Only attach the cert bundle for wss:// (cloud GLM). The local Mac backend
+       is plain ws:// — no TLS, so crt_bundle must be NULL there. */
     esp_websocket_client_config_t ws_cfg = {
         .uri              = url,
-        .crt_bundle_attach = esp_crt_bundle_attach,
+        .crt_bundle_attach = is_tls ? esp_crt_bundle_attach : NULL,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms   = 10000,
         .buffer_size          = 8192,   /* larger RX buffer for big text frames */
