@@ -7,9 +7,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/ringbuf.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 
 #include <string.h>
 #include <stdbool.h>
@@ -60,6 +62,24 @@ typedef struct {
 
 static QueueHandle_t s_uplink_q = NULL;
 static TaskHandle_t  s_uplink_task = NULL;
+
+/* ---- Downlink ringbuffer (WS event task -> downlink task) ------------------ */
+
+/*
+ * The GLM audio cb runs on the WS event task and MUST NOT block on playback
+ * (bsp_audio_play stalls for the duration of the audio). It copies the delta
+ * bytes into a byte ringbuffer (non-blocking) and returns; a dedicated downlink
+ * task drains it and plays. On a full ringbuffer we drop the newest bytes
+ * rather than stall WS RX.
+ *
+ * 24 kHz mono int16 -> 48000 bytes/s. ~96 KB ~= 2s of headroom, placed in PSRAM.
+ */
+#define DOWNLINK_RB_BYTES   (96 * 1024)
+#define DOWNLINK_DRAIN_MAX  4096   /* max bytes handed to play per iteration */
+
+static RingbufHandle_t s_downlink_rb = NULL;
+static StaticRingbuffer_t *s_downlink_rb_struct = NULL;
+static TaskHandle_t        s_downlink_task = NULL;
 
 /* ---- State transitions ----------------------------------------------------- */
 
@@ -133,14 +153,52 @@ static void uplink_task(void *arg)
     }
 }
 
-/* Wraps glm_audio_out_play: on the first delta of a response, flip to SPEAKING. */
+/*
+ * GLM downlink audio cb. Runs on the WS event task: copy the delta bytes into
+ * the ringbuffer (non-blocking) and return immediately. NEVER call playback
+ * here — that would stall WS RX for seconds. On a full ringbuffer, drop the
+ * oldest bytes to make room for the newest delta.
+ */
 static void audio_out_wrapper(const uint8_t *pcm16, size_t len)
 {
+    if (!s_downlink_rb || !pcm16 || len == 0) {
+        return;
+    }
+
     if (s_state != VOICE_SPEAKING) {
         set_state(VOICE_SPEAKING, "说话");
     }
     s_last_activity_us = esp_timer_get_time();
-    glm_audio_out_play(pcm16, len);
+
+    /* Non-blocking send. If full, drain oldest bytes and retry once. */
+    if (xRingbufferSend(s_downlink_rb, pcm16, len, 0) != pdTRUE) {
+        size_t drained = 0;
+        void *old = xRingbufferReceiveUpTo(s_downlink_rb, &drained, 0, len);
+        if (old) {
+            vRingbufferReturnItem(s_downlink_rb, old);
+        }
+        if (xRingbufferSend(s_downlink_rb, pcm16, len, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "downlink ringbuffer full, dropping %zu bytes", len);
+        }
+    }
+}
+
+/* Dedicated downlink task: drain the ringbuffer and play (may block on codec). */
+static void downlink_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        size_t n = 0;
+        uint8_t *bytes = (uint8_t *)xRingbufferReceiveUpTo(
+            s_downlink_rb, &n, portMAX_DELAY, DOWNLINK_DRAIN_MAX);
+        if (bytes) {
+            if (n > 0) {
+                s_last_activity_us = esp_timer_get_time();
+                glm_audio_out_play(bytes, n);
+            }
+            vRingbufferReturnItem(s_downlink_rb, bytes);
+        }
+    }
 }
 
 /* GLM server event callback (non-audio events). */
@@ -157,8 +215,10 @@ static void on_glm_event(const char *type)
     } else if (strcmp(type, "input_audio_buffer.speech_started") == 0) {
         s_last_activity_us = esp_timer_get_time();
         set_state(VOICE_LISTENING, "聆听");
-    } else if (strcmp(type, "response.audio.done") == 0) {
-        /* One question -> one answer per wake. Stop streaming, return to IDLE. */
+    } else if (strcmp(type, "response.audio.done") == 0 ||
+               strcmp(type, "response.done") == 0) {
+        /* One question -> one answer per wake. Either terminal event ends the
+         * turn: stop streaming, return to IDLE. */
         bsp_sr_set_streaming(false);
         set_state(VOICE_IDLE, "待命");
     } else if (strcmp(type, "error") == 0) {
@@ -176,10 +236,13 @@ static void watchdog_task(void *arg)
     (void)arg;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        if (s_state == VOICE_LISTENING) {
+        /* Time out both LISTENING and SPEAKING if no progress, so the state
+         * machine can't wedge in "聆听" or "说话". */
+        if (s_state == VOICE_LISTENING || s_state == VOICE_SPEAKING) {
             int64_t now = esp_timer_get_time();
             if (now - s_last_activity_us > LISTEN_TIMEOUT_US) {
-                ESP_LOGW(TAG, "listen timeout, returning to IDLE");
+                ESP_LOGW(TAG, "turn timeout (%s), returning to IDLE",
+                         s_state == VOICE_LISTENING ? "listening" : "speaking");
                 bsp_sr_set_streaming(false);
                 set_state(VOICE_IDLE, "待命");
             }
@@ -211,6 +274,27 @@ esp_err_t voice_app_start(void)
     }
     if (xTaskCreate(uplink_task, "voice_uplink", 4096, NULL, 5, &s_uplink_task) != pdPASS) {
         ESP_LOGE(TAG, "failed to create uplink task");
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Downlink ringbuffer + task. Storage in PSRAM (large), control struct in
+     * internal RAM (required by the static ringbuffer API). */
+    uint8_t *rb_storage = heap_caps_malloc(DOWNLINK_RB_BYTES, MALLOC_CAP_SPIRAM);
+    s_downlink_rb_struct = heap_caps_malloc(sizeof(StaticRingbuffer_t),
+                                            MALLOC_CAP_INTERNAL);
+    if (!rb_storage || !s_downlink_rb_struct) {
+        ESP_LOGE(TAG, "failed to alloc downlink ringbuffer");
+        return ESP_ERR_NO_MEM;
+    }
+    s_downlink_rb = xRingbufferCreateStatic(DOWNLINK_RB_BYTES,
+                                            RINGBUF_TYPE_BYTEBUF,
+                                            rb_storage, s_downlink_rb_struct);
+    if (!s_downlink_rb) {
+        ESP_LOGE(TAG, "failed to create downlink ringbuffer");
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreate(downlink_task, "voice_downlink", 4096, NULL, 5, &s_downlink_task) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create downlink task");
         return ESP_ERR_NO_MEM;
     }
 

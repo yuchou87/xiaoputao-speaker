@@ -16,7 +16,7 @@
 static const char *TAG = "glm_rt";
 
 #define GLM_DEFAULT_URL     "wss://open.bigmodel.cn/api/paas/v4/realtime"
-#define GLM_KEY_MAXLEN      128
+#define GLM_KEY_MAXLEN      256
 #define GLM_URL_MAXLEN      256
 #define GLM_REASSEMBLY_CAP  (64 * 1024)   /* max reassembly buffer (64 KB) */
 
@@ -34,6 +34,10 @@ static glm_event_cb_t  s_event_cb = NULL;
 static uint8_t *s_rx_buf    = NULL;
 static size_t   s_rx_len    = 0;
 static size_t   s_rx_cap    = 0;
+/* Whether the frame currently being reassembled is a text frame we should keep.
+ * The op_code is only meaningful on the first event (payload_offset == 0);
+ * continuation events report op_code 0, so we latch the decision here. */
+static bool     s_rx_is_text = false;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                             */
@@ -197,18 +201,33 @@ static void ws_event_handler(void *arg, esp_event_base_t base,
         break;
 
     case WEBSOCKET_EVENT_DATA:
-        /* Only handle text frames (opcode 1).
-         * data->op_code == 1 for text; op_code == 2 for binary.
-         * Accumulate fragments: payload_offset == 0 starts a new message. */
-        if (data->op_code != 1) break;          /* ignore binary / ping / pong */
-
+        /* Reassemble fragmented text messages. A single large text frame is
+         * delivered across multiple events: only the first (payload_offset == 0)
+         * carries the real op_code; continuation events report op_code 0. So we
+         * must NOT gate on op_code per-event — latch the decision on the first
+         * event and accumulate the rest regardless of their op_code. */
         if (data->payload_offset == 0) {
             rx_buf_reset();                      /* new message starts */
+            /* Skip clearly-non-text control frames (close/ping/pong). Text is
+             * op_code 1; a fragmented frame's first event also reports 1. */
+            switch (data->op_code) {
+            case 0x8:   /* close */
+            case 0x9:   /* ping  */
+            case 0xA:   /* pong  */
+                s_rx_is_text = false;
+                break;
+            default:
+                s_rx_is_text = true;
+                break;
+            }
         }
+
+        if (!s_rx_is_text) break;                /* ignore non-text frames */
 
         if (data->data_len > 0 && data->data_ptr) {
             if (rx_buf_ensure(data->data_len) != ESP_OK) {
                 rx_buf_reset();
+                s_rx_is_text = false;
                 break;
             }
             memcpy(s_rx_buf + s_rx_len, data->data_ptr, data->data_len);
@@ -220,6 +239,7 @@ static void ws_event_handler(void *arg, esp_event_base_t base,
         if (s_rx_len == (size_t)data->payload_len) {
             dispatch_message((char *)s_rx_buf);
             rx_buf_reset();
+            s_rx_is_text = false;
         }
         break;
 
@@ -283,6 +303,7 @@ esp_err_t glm_rt_start(void)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms   = 10000,
+        .buffer_size          = 8192,   /* larger RX buffer for big text frames */
     };
 
     s_client = esp_websocket_client_init(&ws_cfg);
@@ -384,8 +405,10 @@ esp_err_t glm_rt_send_audio(const int16_t *pcm16, size_t samples)
         return ESP_ERR_NO_MEM;
     }
 
+    /* Uplink audio is disposable under backpressure: use a short timeout so a
+     * stalled socket can't block the uplink task for seconds. */
     int sent = esp_websocket_client_send_text(s_client, json_str, strlen(json_str),
-                                              pdMS_TO_TICKS(2000));
+                                              pdMS_TO_TICKS(150));
     free(json_str);
 
     if (sent < 0) {
