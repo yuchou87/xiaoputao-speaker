@@ -43,10 +43,10 @@
 #define EXAMPLE_LCD_BK_LIGHT_ON_LEVEL       (1)
 #define EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL !EXAMPLE_LCD_BK_LIGHT_ON_LEVEL
 
-/* Must be >= the LVGL flush buffer (W * BUF_LINES * 2 bytes = 360*40*2 = 28800),
-   otherwise esp_lcd chops each flush into many sub-transactions and overflows
-   trans_queue_depth -> "spi transmit (queue) color failed". */
-#define ESP_PANEL_HOST_SPI_MAX_TRANSFER_SIZE   (360 * 40 * 2 + 64)
+/* >= the LVGL flush buffer (W * BUF_LINES * 2 = 360*10*2 = 7200) so each flush is
+   a single SPI transaction (no trans_queue overflow). Buffers live in internal
+   DMA RAM (see bsp_lvgl_init), so no bounce buffer is allocated per transfer. */
+#define ESP_PANEL_HOST_SPI_MAX_TRANSFER_SIZE   (360 * 10 * 2 + 64)
 
 #define LEDC_HS_TIMER          LEDC_TIMER_0
 #define LEDC_LS_MODE           LEDC_LOW_SPEED_MODE

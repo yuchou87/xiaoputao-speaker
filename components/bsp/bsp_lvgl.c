@@ -11,7 +11,11 @@
 
 #define LCD_W 360
 #define LCD_H 360
-#define BUF_LINES 40          // partial buffer height (px) -> W*40 per buffer
+#define BUF_LINES 10          // partial buffer height (px) -> W*10 per buffer
+                              // Kept small so both buffers fit in internal DMA RAM
+                              // (see bsp_lvgl_init): SPI then DMAs straight from
+                              // them with no per-transfer bounce buffer, which was
+                              // exhausting internal RAM during streaming.
 #define TICK_MS 2
 
 static const char *TAG = "bsp_lvgl";
@@ -67,9 +71,13 @@ esp_err_t bsp_lvgl_init(void)
 
     lv_init();
 
+    /* DMA-capable internal RAM so the SPI LCD transmits directly from these
+       buffers. PSRAM buffers would force spi_master to allocate a same-sized
+       internal bounce buffer per transfer, which fails under memory pressure
+       during audio streaming ("Failed to allocate priv TX buffer"). */
     size_t px = LCD_W * BUF_LINES;
-    lv_color_t *b1 = heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-    lv_color_t *b2 = heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    lv_color_t *b1 = heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    lv_color_t *b2 = heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     assert(b1 && b2);
     lv_disp_draw_buf_init(&s_draw_buf, b1, b2, px);
 

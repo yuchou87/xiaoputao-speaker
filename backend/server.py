@@ -46,8 +46,6 @@ async def handler(ws):
     had_speech = False
     silence_ms = 0
     busy = False   # a turn is being produced; keep draining the socket but drop audio
-    dbg_peak = 0.0   # peak RMS seen since last debug print
-    dbg_ms = 0       # ms of audio accumulated since last debug print
 
     async def process(utterance):
         nonlocal busy
@@ -70,43 +68,31 @@ async def handler(ws):
             if t == "session.update":
                 await ws.send(evt("session.updated", session=m.get("session", {})))
             elif t == "input_audio_buffer.append":
-                # While producing a reply we must NOT block this read loop (the device
-                # streams continuously; if we stop reading, websockets backpressure
-                # stalls the socket and the device's WS write times out -> disconnect).
-                # So run the pipeline as a task and discard incoming audio meanwhile.
+                # End-of-utterance is decided on the DEVICE (its AFE VAD) and
+                # signalled via input_audio_buffer.commit. Here we just buffer the
+                # audio. Energy VAD on this side proved fragile (the device's
+                # uplink gain pushed the noise floor above any fixed threshold),
+                # so we no longer auto-detect speech_stopped from it.
                 if busy:
-                    continue
+                    continue   # drop audio while a reply is being produced
                 pcm = b64_to_pcm16(m.get("audio", ""))
                 if pcm.size == 0:
                     continue
-                frame_ms = pcm.size * 1000 // config.IN_RATE
-                level = rms(pcm)
-                # --- diagnostics: peak RMS vs threshold, ~1s cadence ---
-                dbg_peak = max(dbg_peak, level)
-                dbg_ms += frame_ms
-                if dbg_ms >= 1000:
-                    print(f"  [vad] peak RMS {dbg_peak:6.0f} / thresh {config.VAD_ENERGY_THRESH} "
-                          f"{'SPEECH' if dbg_peak >= config.VAD_ENERGY_THRESH else 'silence'}")
-                    dbg_peak, dbg_ms = 0.0, 0
-                if level >= config.VAD_ENERGY_THRESH:
-                    if not had_speech:
-                        had_speech = True
-                        print("  [vad] speech_started")
-                        await ws.send(evt("input_audio_buffer.speech_started"))
-                    buf.append(pcm)
-                    silence_ms = 0
-                elif had_speech:
-                    buf.append(pcm)
-                    silence_ms += frame_ms
-                    if silence_ms >= config.VAD_SILENCE_MS:
-                        print("  [vad] speech_stopped -> running pipeline")
-                        await ws.send(evt("input_audio_buffer.speech_stopped"))
-                        utterance = np.concatenate(buf)
-                        buf, had_speech, silence_ms = [], False, 0
-                        busy = True
-                        asyncio.create_task(process(utterance))
+                if not had_speech:
+                    had_speech = True
+                    await ws.send(evt("input_audio_buffer.speech_started"))
+                buf.append(pcm)
+                silence_ms += pcm.size * 1000 // config.IN_RATE
+                # Safety fallback if a commit is ever lost: cap the utterance.
+                if silence_ms >= 20000:
+                    print("  [vad] 20s cap -> running pipeline")
+                    utterance = np.concatenate(buf)
+                    buf, had_speech, silence_ms = [], False, 0
+                    busy = True
+                    asyncio.create_task(process(utterance))
             elif t == "input_audio_buffer.commit":
                 if buf and not busy:
+                    print(f"  [vad] commit -> running pipeline ({silence_ms} ms audio)")
                     utterance = np.concatenate(buf)
                     buf, had_speech, silence_ms = [], False, 0
                     busy = True

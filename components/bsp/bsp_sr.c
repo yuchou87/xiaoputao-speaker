@@ -24,16 +24,30 @@ static size_t s_echo_len;
 
 static bsp_sr_audio_cb_t s_audio_cb;
 static volatile bool s_streaming;
+static bsp_sr_eou_cb_t s_eou_cb;
 
-/* Digital gain applied to AFE output before uplink (see detect_task).
- * Backend measured speech at RMS ~350 with 12x; 20x lands it ~580 (thresh 400). */
-#define BSP_SR_UPLINK_GAIN 20
+/* End-of-utterance: silence (via AFE VAD) this long after speech ends the turn. */
+#define BSP_SR_EOU_SILENCE_MS 800
+
+/* Digital gain applied to AFE output before uplink (see detect_task). Only
+ * affects STT quality now — turn-taking uses the AFE VAD, not uplink energy.
+ * 20x clipped hard; 12x keeps speech well above the noise floor without it. */
+#define BSP_SR_UPLINK_GAIN 12
 
 void bsp_sr_echo(void) { s_echo_req = true; }
 
 void bsp_sr_set_audio_cb(bsp_sr_audio_cb_t cb) { s_audio_cb = cb; }
+void bsp_sr_set_eou_cb(bsp_sr_eou_cb_t cb) { s_eou_cb = cb; }
 
-void bsp_sr_set_streaming(bool on) { s_streaming = on; }
+/* VAD turn-tracking (touched only on the detect task; on_wake runs there too). */
+static bool s_vad_speech_seen;
+static int  s_vad_silence_ms;
+
+void bsp_sr_set_streaming(bool on)
+{
+    if (on) { s_vad_speech_seen = false; s_vad_silence_ms = 0; }
+    s_streaming = on;
+}
 
 static void feed_task(void *arg)
 {
@@ -93,6 +107,22 @@ static void detect_task(void *arg)
                 }
                 s_audio_cb(gbuf, n);
                 off += n;
+            }
+
+            // End-of-utterance via AFE VAD: once speech has started, sustained
+            // silence ends the turn (robust, gain-independent).
+            int frame_ms = (res->data_size / (int)sizeof(int16_t)) * 1000 / 16000;
+            if (res->vad_state == VAD_SPEECH) {
+                s_vad_speech_seen = true;
+                s_vad_silence_ms = 0;
+            } else if (s_vad_speech_seen) {
+                s_vad_silence_ms += frame_ms;
+                if (s_vad_silence_ms >= BSP_SR_EOU_SILENCE_MS) {
+                    s_vad_speech_seen = false;
+                    s_vad_silence_ms = 0;
+                    ESP_LOGI(TAG, "VAD end-of-utterance");
+                    if (s_eou_cb) s_eou_cb();
+                }
             }
         }
         // Single-channel AFE signals WAKENET_DETECTED; multi-channel ("RMNM")

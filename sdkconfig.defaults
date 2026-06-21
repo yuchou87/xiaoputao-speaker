@@ -26,3 +26,13 @@ CONFIG_LV_COLOR_16_SWAP=y
 # Builtin 你好小智 (WN9S) for bring-up; custom 你好小葡萄 (TTS-trained) comes later.
 # Models default to the SPIFFS 'model' partition.
 CONFIG_SR_WN_WN9S_NIHAOXIAOZHI=y
+
+# Networking headroom for continuous WS audio uplink (avoid TCP send stalls
+# that surfaced as transport_poll_write() timeouts -> WebSocket disconnect).
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+CONFIG_LWIP_TCP_WND_DEFAULT=16384
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
+
+# Allocate WiFi/lwIP buffers in PSRAM first, freeing scarce internal SRAM
+# (esp-sr AFE + LVGL leave only ~25KB internal, starving WiFi TX -> WS drops).
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y

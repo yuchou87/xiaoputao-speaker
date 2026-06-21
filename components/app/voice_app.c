@@ -109,6 +109,20 @@ static void on_wake(void)
     set_state(VOICE_LISTENING);
 }
 
+/* Runs on the esp-sr detect task when the AFE VAD reports end-of-utterance.
+ * Stop streaming and commit so the backend produces the reply. */
+static void on_eou(void)
+{
+    if (s_state != VOICE_LISTENING) {
+        return;   /* only meaningful while actively listening */
+    }
+    ESP_LOGI(TAG, "end-of-utterance -> commit");
+    bsp_sr_set_streaming(false);
+    glm_rt_commit();
+    s_last_activity_us = esp_timer_get_time();
+    ui_set_state(UI_THINKING);
+}
+
 /* Runs on the bsp_sr feed task. Copy + enqueue, never block. */
 static void uplink_enqueue(const int16_t *pcm16, size_t samples)
 {
@@ -138,19 +152,36 @@ static void uplink_enqueue(const int16_t *pcm16, size_t samples)
     }
 }
 
-/* Dedicated uplink task: drain the queue and send to GLM (may block on WS). */
+/* ~96ms of audio per WS frame. Coalescing many 32ms slots into one larger frame
+ * cuts the WS/TCP/WiFi frame rate ~3x, which keeps sustained uplink from
+ * saturating the WiFi TX path (the streaming-time poll_write timeouts). */
+#define UPLINK_BATCH_SAMPLES (UPLINK_SLOT_SAMPLES * 3)
+
+/* Dedicated uplink task: coalesce queued slots into larger frames and send. */
 static void uplink_task(void *arg)
 {
     (void)arg;
+    static int16_t batch[UPLINK_BATCH_SAMPLES];
+    size_t fill = 0;
     uplink_chunk_t chunk;
     for (;;) {
-        if (xQueueReceive(s_uplink_q, &chunk, portMAX_DELAY) == pdTRUE) {
-            if (glm_rt_connected()) {
-                esp_err_t err = glm_rt_send_audio(chunk.pcm, chunk.samples);
-                if (err != ESP_OK) {
-                    ESP_LOGD(TAG, "send_audio failed: %s", esp_err_to_name(err));
-                }
+        /* Short timeout so a trailing partial batch still flushes promptly. */
+        if (xQueueReceive(s_uplink_q, &chunk, pdMS_TO_TICKS(40)) == pdTRUE) {
+            size_t n = chunk.samples > UPLINK_SLOT_SAMPLES ? UPLINK_SLOT_SAMPLES
+                                                           : chunk.samples;
+            if (fill + n > UPLINK_BATCH_SAMPLES) {
+                if (glm_rt_connected()) glm_rt_send_audio(batch, fill);
+                fill = 0;
             }
+            memcpy(batch + fill, chunk.pcm, n * sizeof(int16_t));
+            fill += n;
+            if (fill >= UPLINK_BATCH_SAMPLES) {
+                if (glm_rt_connected()) glm_rt_send_audio(batch, fill);
+                fill = 0;
+            }
+        } else if (fill > 0) {
+            if (glm_rt_connected()) glm_rt_send_audio(batch, fill);
+            fill = 0;
         }
     }
 }
@@ -320,8 +351,9 @@ esp_err_t voice_app_start(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Register mic uplink cb before enabling wake/streaming. */
+    /* Register mic uplink + end-of-utterance cbs before enabling wake/streaming. */
     bsp_sr_set_audio_cb(uplink_enqueue);
+    bsp_sr_set_eou_cb(on_eou);
 
     err = bsp_sr_start(on_wake);
     if (err != ESP_OK) {

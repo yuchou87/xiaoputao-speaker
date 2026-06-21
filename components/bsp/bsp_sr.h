@@ -27,3 +27,9 @@ void bsp_sr_set_audio_cb(bsp_sr_audio_cb_t cb);
 // Enable or disable forwarding of AFE-processed audio to the registered
 // audio callback. Safe to toggle at runtime from any task.
 void bsp_sr_set_streaming(bool on);
+
+// End-of-utterance callback: invoked once (on the detect task) when, while
+// streaming, the AFE VAD reports sustained silence after speech. Lets the app
+// end the turn itself instead of relying on a remote energy VAD.
+typedef void (*bsp_sr_eou_cb_t)(void);
+void bsp_sr_set_eou_cb(bsp_sr_eou_cb_t cb);

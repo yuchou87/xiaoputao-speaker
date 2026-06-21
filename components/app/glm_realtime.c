@@ -432,3 +432,19 @@ esp_err_t glm_rt_send_audio(const int16_t *pcm16, size_t samples)
 
     return ESP_OK;
 }
+
+esp_err_t glm_rt_commit(void)
+{
+    if (!s_client || !s_connected) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    static const char commit_msg[] = "{\"type\":\"input_audio_buffer.commit\"}";
+    int sent = esp_websocket_client_send_text(s_client, commit_msg, strlen(commit_msg),
+                                              pdMS_TO_TICKS(1000));
+    if (sent < 0) {
+        ESP_LOGE(TAG, "commit send failed");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "input_audio_buffer.commit sent");
+    return ESP_OK;
+}

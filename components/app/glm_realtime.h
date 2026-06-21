@@ -64,6 +64,17 @@ bool glm_rt_connected(void);
  */
 esp_err_t glm_rt_send_audio(const int16_t *pcm16, size_t samples);
 
+/**
+ * @brief Commit the input audio buffer, signalling end-of-utterance.
+ *
+ * Sends input_audio_buffer.commit so the backend runs the STT->LLM->TTS turn
+ * on the audio streamed so far. Used when the device's AFE VAD detects the
+ * user has stopped speaking.
+ *
+ * @return ESP_OK on success, ESP_ERR_INVALID_STATE if not connected.
+ */
+esp_err_t glm_rt_commit(void);
+
 #ifdef __cplusplus
 }
 #endif
