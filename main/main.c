@@ -4,6 +4,7 @@
 #include "esp_chip_info.h"
 #include "bsp_i2c.h"
 #include "bsp_exio.h"
+#include "st77916_panel.h"
 
 static const char *TAG = "xpt";
 
@@ -36,4 +37,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(bsp_exio_init());
     ESP_LOGI(TAG, "TCA9554 init ok");
+
+    // Display: ST77916 QSPI + backlight. LCD_Init() draws a color-bar test
+    // pattern (test_draw_bitmap) so we can confirm the panel lights up.
+    LCD_Init();
+    ESP_LOGI(TAG, "LCD init done (color bars should be visible)");
 }
