@@ -21,3 +21,8 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # LVGL: RGB565 byte-swap for this QSPI panel
 CONFIG_LV_COLOR_16_SWAP=y
+
+# esp-sr (2.4.x): AFE/WakeNet are always built; only select the wake-word model.
+# Builtin 你好小智 (WN9S) for bring-up; custom 你好小葡萄 (TTS-trained) comes later.
+# Models default to the SPIFFS 'model' partition.
+CONFIG_SR_WN_WN9S_NIHAOXIAOZHI=y

@@ -8,6 +8,7 @@
 #include "bsp_lvgl.h"
 #include "cst816.h"
 #include "bsp_audio.h"
+#include "bsp_sr.h"
 #include "lvgl.h"
 #include <math.h>
 
@@ -35,6 +36,12 @@ static void tap_event_cb(lv_event_t *e)
     count++;
     lv_label_set_text_fmt(lbl, "TAP: %d", count);
     ESP_LOGI(TAG, "touch tap #%d", count);
+}
+
+static void on_wake(void)
+{
+    ESP_LOGI(TAG, "=== WAKE: 你好小葡萄 ===");
+    bsp_audio_play(s_tone, 3200);   // ~0.2s beep ack (s_tone holds 1kHz sine)
 }
 
 void app_main(void)
@@ -101,6 +108,9 @@ void app_main(void)
             ESP_LOGI(TAG, "loopback done");
             heap_caps_free(rec);
         }
+
+        // Wake word: esp-sr AFE + WakeNet (builtin 你好小智 for now).
+        bsp_sr_start(on_wake);
     } else {
         ESP_LOGE(TAG, "audio init failed (continuing)");
     }
