@@ -27,7 +27,8 @@
 | T9 esp-sr 唤醒(你好小智) | ✅ | model 加载、feed chunk512/nch1、started |
 | T12 电池 ADC | ✅ | cali OK、4.22V |
 | T10 自定义词 你好小葡萄 | ⏸ 另起 | 见下 |
-| T11 AEC barge-in | ⏸ 待硬件 | 见下 |
+| 4ch RMNM 升级 | ✅ | ES7210 全4麦 TDM, AFE "RMNM"(ch0=AEC参考), feed nch=4; 唤醒+echo 上板验证(听到回声) |
+| T11 AEC barge-in | 🟡 基础就位 | AEC 参考通道(RMNM ch0)已馈送; 完整 barge-in 待 P3 音乐(持续音源)验证 |
 
 ## 统一硬件测试清单（请上板逐项确认）
 
