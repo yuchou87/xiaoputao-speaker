@@ -89,9 +89,16 @@ def synthesize(text: str) -> np.ndarray:
     from mlx_audio.tts.generate import generate_audio
     with tempfile.TemporaryDirectory() as d:
         prefix = f"tts_{uuid.uuid4().hex[:8]}"
-        generate_audio(text=text, model=_get_tts(), lang_code=config.TTS_LANG,
-                       voice=config.TTS_VOICE, output_path=d, file_prefix=prefix,
-                       audio_format="wav", join_audio=True, save=True, verbose=False)
+        kw = dict(text=text, model=_get_tts(), lang_code=config.TTS_LANG,
+                  output_path=d, file_prefix=prefix, audio_format="wav",
+                  join_audio=True, save=True, verbose=False)
+        if config.TTS_VOICE:
+            kw["voice"] = config.TTS_VOICE
+        if config.TTS_REF_AUDIO:
+            kw["ref_audio"] = config.TTS_REF_AUDIO
+            if config.TTS_REF_TEXT:
+                kw["ref_text"] = config.TTS_REF_TEXT
+        generate_audio(**kw)
         wavs = sorted(glob.glob(os.path.join(d, prefix + "*.wav")))
         if not wavs:
             raise RuntimeError("TTS produced no wav")

@@ -27,11 +27,15 @@ SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT",
     "你是「小葡萄」，一个友好、风趣的中文语音助手，运行在用户家里的智能音箱上。"
     "回答简洁口语化，单次回复控制在100字内，适合语音播报。会讲故事和笑话。")
 
-# mlx-audio models / voices (downloaded from HuggingFace on first use)
-STT_MODEL = os.environ.get("STT_MODEL", "mlx-community/whisper-large-v3-turbo")
-TTS_MODEL = os.environ.get("TTS_MODEL", "mlx-community/Kokoro-82M-bf16")
-TTS_LANG = os.environ.get("TTS_LANG", "z")          # Kokoro: 'z' = Mandarin
-TTS_VOICE = os.environ.get("TTS_VOICE", "zf_xiaobei")  # Chinese female
+# mlx-audio models (auto-downloaded from HuggingFace on first use)
+STT_MODEL = os.environ.get("STT_MODEL", "mlx-community/Qwen3-ASR-1.7B-8bit")
+TTS_MODEL = os.environ.get("TTS_MODEL", "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16")
+# TTS extras (Qwen3-TTS may differ from Kokoro; lang/voice often ignored, a
+# "Base" voice-clone model may need a reference voice — verify via --selftest).
+TTS_LANG = os.environ.get("TTS_LANG", "zh")
+TTS_VOICE = os.environ.get("TTS_VOICE", "")        # empty = model default
+TTS_REF_AUDIO = os.environ.get("TTS_REF_AUDIO", "")  # optional ref wav for voice clone
+TTS_REF_TEXT = os.environ.get("TTS_REF_TEXT", "")    # transcript of ref wav
 
 # Audio
 IN_RATE = 16000      # device uplink PCM16 16k mono
