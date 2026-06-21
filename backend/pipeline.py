@@ -83,6 +83,14 @@ def reset_history():
     _history.clear()
 
 
+def preload():
+    """Eagerly load STT/TTS models (and the LLM client) so the first real turn
+    isn't penalised by a multi-second model load while the device is streaming."""
+    _get_stt()
+    _get_tts()
+    _get_deepseek()
+
+
 # ---- TTS -------------------------------------------------------------------
 def synthesize(text: str) -> np.ndarray:
     """Return 24kHz PCM16 mono for `text`."""

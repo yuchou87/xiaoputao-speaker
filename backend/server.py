@@ -45,6 +45,19 @@ async def handler(ws):
     buf = []
     had_speech = False
     silence_ms = 0
+    busy = False   # a turn is being produced; keep draining the socket but drop audio
+
+    async def process(utterance):
+        nonlocal busy
+        try:
+            await run_pipeline(ws, utterance)
+        except websockets.ConnectionClosed:
+            pass
+        except Exception as e:  # noqa: BLE001 - keep the connection alive on pipeline errors
+            print(f"  pipeline error: {e}")
+        finally:
+            busy = False
+
     try:
         async for msg in ws:
             try:
@@ -55,6 +68,12 @@ async def handler(ws):
             if t == "session.update":
                 await ws.send(evt("session.updated", session=m.get("session", {})))
             elif t == "input_audio_buffer.append":
+                # While producing a reply we must NOT block this read loop (the device
+                # streams continuously; if we stop reading, websockets backpressure
+                # stalls the socket and the device's WS write times out -> disconnect).
+                # So run the pipeline as a task and discard incoming audio meanwhile.
+                if busy:
+                    continue
                 pcm = b64_to_pcm16(m.get("audio", ""))
                 if pcm.size == 0:
                     continue
@@ -70,18 +89,24 @@ async def handler(ws):
                     silence_ms += frame_ms
                     if silence_ms >= config.VAD_SILENCE_MS:
                         await ws.send(evt("input_audio_buffer.speech_stopped"))
-                        await run_pipeline(ws, np.concatenate(buf))
+                        utterance = np.concatenate(buf)
                         buf, had_speech, silence_ms = [], False, 0
+                        busy = True
+                        asyncio.create_task(process(utterance))
             elif t == "input_audio_buffer.commit":
-                if buf:
-                    await run_pipeline(ws, np.concatenate(buf))
+                if buf and not busy:
+                    utterance = np.concatenate(buf)
                     buf, had_speech, silence_ms = [], False, 0
+                    busy = True
+                    asyncio.create_task(process(utterance))
     except websockets.ConnectionClosed:
         pass
     print(f"[-] client disconnected: {peer}")
 
 
 async def main():
+    print("preloading models (STT/TTS/LLM)...")
+    await asyncio.get_event_loop().run_in_executor(None, pipeline.preload)
     print(f"小葡萄 local backend listening on ws://{config.WS_HOST}:{config.WS_PORT}")
     async with websockets.serve(handler, config.WS_HOST, config.WS_PORT, max_size=8 * 1024 * 1024):
         await asyncio.Future()
