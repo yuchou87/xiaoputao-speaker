@@ -11,9 +11,6 @@
 #include "bsp_sr.h"
 #include "bsp_battery.h"
 #include "lvgl.h"
-#include <math.h>
-
-static int16_t s_tone[16000];   // 1s @ 16kHz, 16-bit mono
 
 static const char *TAG = "xpt";
 
@@ -41,8 +38,8 @@ static void tap_event_cb(lv_event_t *e)
 
 static void on_wake(void)
 {
-    ESP_LOGI(TAG, "=== WAKE: 你好小葡萄 ===");
-    bsp_audio_play(s_tone, 3200);   // ~0.2s beep ack (s_tone holds 1kHz sine)
+    ESP_LOGI(TAG, "=== WAKE === (speak now, will echo back)");
+    bsp_sr_echo();   // capture 2s and play it back (no beep)
 }
 
 void app_main(void)
@@ -92,15 +89,10 @@ void app_main(void)
     bsp_lvgl_unlock();
     ESP_LOGI(TAG, "UI ready (tap the button)");
 
-    // Audio out: ES8311 + I2S. Play a 1 kHz test tone at boot. Non-fatal.
+    // Audio: ES8311 out + ES7210 in. Non-fatal if it fails.
     if (bsp_audio_init() == ESP_OK) {
-        // Prepare a short 1kHz buffer used only as the wake-ack beep (no boot tone).
-        for (int i = 0; i < 16000; i++) {
-            s_tone[i] = (int16_t) (2000.0f * sinf(2.0f * (float) M_PI * 1000.0f * i / 16000.0f));
-        }
-
-        // Wake word: esp-sr AFE + WakeNet (builtin 你好小智 for now).
-        // Clean boot: no test tone / loopback — go straight to wake standby.
+        // Clean boot: no test tone / loopback. Go straight to wake standby;
+        // saying the wake word echoes back 2s of your voice (see on_wake).
         bsp_sr_start(on_wake);
     } else {
         ESP_LOGE(TAG, "audio init failed (continuing)");

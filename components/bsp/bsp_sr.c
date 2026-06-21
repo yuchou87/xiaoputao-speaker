@@ -8,11 +8,21 @@
 #include "esp_afe_sr_iface.h"
 #include "esp_afe_sr_models.h"
 #include "model_path.h"
+#include <string.h>
+
+#define ECHO_SAMPLES (16000 * 2)   // 2s mono @ 16kHz
 
 static const char *TAG = "bsp_sr";
 static const esp_afe_sr_iface_t *s_afe;
 static esp_afe_sr_data_t *s_afe_data;
 static bsp_sr_wake_cb_t s_cb;
+
+static volatile bool s_echo_req;
+static bool s_echo_active;
+static int16_t *s_echo_buf;
+static size_t s_echo_len;
+
+void bsp_sr_echo(void) { s_echo_req = true; }
 
 static void feed_task(void *arg)
 {
@@ -23,6 +33,24 @@ static void feed_task(void *arg)
     while (buf) {
         bsp_audio_read(buf, chunk * nch);
         s_afe->feed(s_afe_data, buf);
+
+        // Echo feature: capture the next 2s of mic into s_echo_buf, then play back.
+        if (s_echo_req && !s_echo_active) {
+            if (!s_echo_buf) s_echo_buf = heap_caps_malloc(ECHO_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+            if (s_echo_buf) { s_echo_active = true; s_echo_len = 0; }
+            s_echo_req = false;
+        }
+        if (s_echo_active) {
+            size_t take = chunk * nch;
+            if (s_echo_len + take > ECHO_SAMPLES) take = ECHO_SAMPLES - s_echo_len;
+            memcpy(s_echo_buf + s_echo_len, buf, take * sizeof(int16_t));
+            s_echo_len += take;
+            if (s_echo_len >= ECHO_SAMPLES) {
+                s_echo_active = false;
+                ESP_LOGI(TAG, "echo: playing back 2s");
+                bsp_audio_play(s_echo_buf, ECHO_SAMPLES);   // blocks feed ~2s (ok)
+            }
+        }
     }
     vTaskDelete(NULL);
 }
