@@ -55,8 +55,10 @@ typedef struct {
     size_t  samples;
 } uplink_chunk_t;
 
-static QueueHandle_t s_uplink_q = NULL;
-static TaskHandle_t  s_uplink_task = NULL;
+static QueueHandle_t   s_uplink_q = NULL;
+static TaskHandle_t    s_uplink_task = NULL;
+static StaticQueue_t  *s_uplink_q_struct = NULL;   /* internal RAM */
+static uint8_t        *s_uplink_q_storage = NULL;   /* PSRAM */
 
 /* ---- Downlink ringbuffer (WS event task -> downlink task) ------------------ */
 
@@ -270,8 +272,18 @@ esp_err_t voice_app_start(void)
         return err;
     }
 
-    /* Uplink queue + task. */
-    s_uplink_q = xQueueCreate(UPLINK_QUEUE_DEPTH, sizeof(uplink_chunk_t));
+    /* Uplink queue + task. Storage (~66 KB) in PSRAM, control struct in internal
+     * RAM — a plain xQueueCreate would need that much contiguous internal DMA RAM,
+     * which isn't available after WiFi/AFE/LVGL init. Queue is task-only (no ISR). */
+    s_uplink_q_storage = heap_caps_malloc((size_t)UPLINK_QUEUE_DEPTH * sizeof(uplink_chunk_t),
+                                          MALLOC_CAP_SPIRAM);
+    s_uplink_q_struct  = heap_caps_malloc(sizeof(StaticQueue_t), MALLOC_CAP_INTERNAL);
+    if (!s_uplink_q_storage || !s_uplink_q_struct) {
+        ESP_LOGE(TAG, "failed to alloc uplink queue");
+        return ESP_ERR_NO_MEM;
+    }
+    s_uplink_q = xQueueCreateStatic(UPLINK_QUEUE_DEPTH, sizeof(uplink_chunk_t),
+                                    s_uplink_q_storage, s_uplink_q_struct);
     if (!s_uplink_q) {
         ESP_LOGE(TAG, "failed to create uplink queue");
         return ESP_ERR_NO_MEM;
