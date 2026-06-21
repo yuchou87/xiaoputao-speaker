@@ -1,0 +1,16 @@
+[project]
+name = "xiaoputao-backend"
+version = "0.1.0"
+description = "Mac mini local voice backend for 小葡萄 — emulates GLM-Realtime WS; mlx-audio STT/TTS + DeepSeek LLM"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "websockets>=13",
+    "numpy>=1.26",
+    "openai>=1.40",        # DeepSeek (OpenAI-compatible) LLM
+    "soundfile>=0.12",
+    "scipy>=1.13",         # resample
+]
+
+[tool.uv]
+# STT/TTS (mlx) added in a later step to keep the first scaffold light:
+#   mlx-audio, mlx-whisper
