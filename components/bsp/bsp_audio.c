@@ -22,9 +22,12 @@ static const char *TAG = "bsp_audio";
 static i2s_chan_handle_t s_tx, s_rx;
 static esp_codec_dev_handle_t s_out, s_in;
 static const audio_codec_data_if_t *s_data;
-// Serializes esp_codec_dev_write (play) and esp_codec_dev_read (capture) so the
-// downlink/echo play path and the feed-task read path don't corrupt each other.
-static SemaphoreHandle_t s_codec_mutex;
+// Separate locks for playback (TX) and capture (RX). They use independent I2S
+// channels (full-duplex), so one shared lock would block playback behind the
+// blocking mic read every frame -> codec underrun -> stutter. Each lock only
+// guards same-direction concurrency (play-vs-echo, read-vs-read).
+static SemaphoreHandle_t s_codec_mutex;   // playback (TX)
+static SemaphoreHandle_t s_in_mutex;      // capture (RX)
 
 // Exposed so the ES7210 capture task (later) can reuse the same RX channel.
 i2s_chan_handle_t bsp_audio_i2s_rx(void) { return s_rx; }
@@ -32,7 +35,8 @@ i2s_chan_handle_t bsp_audio_i2s_rx(void) { return s_rx; }
 esp_err_t bsp_audio_init(void)
 {
     s_codec_mutex = xSemaphoreCreateMutex();
-    if (!s_codec_mutex) { ESP_LOGE(TAG, "codec mutex create failed"); return ESP_ERR_NO_MEM; }
+    s_in_mutex = xSemaphoreCreateMutex();
+    if (!s_codec_mutex || !s_in_mutex) { ESP_LOGE(TAG, "codec mutex create failed"); return ESP_ERR_NO_MEM; }
 
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     ESP_ERROR_CHECK(i2s_new_channel(&cc, &s_tx, &s_rx));
@@ -114,9 +118,9 @@ esp_err_t bsp_audio_init(void)
 // Read raw interleaved 4-channel int16 frames (n_samples = frames * 4).
 esp_err_t bsp_audio_read_raw(int16_t *buf, size_t n_samples)
 {
-    xSemaphoreTake(s_codec_mutex, portMAX_DELAY);
+    xSemaphoreTake(s_in_mutex, portMAX_DELAY);
     int r = esp_codec_dev_read(s_in, (void *) buf, n_samples * sizeof(int16_t));
-    xSemaphoreGive(s_codec_mutex);
+    xSemaphoreGive(s_in_mutex);
     return r == 0 ? ESP_OK : ESP_FAIL;
 }
 
