@@ -4,6 +4,7 @@
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "es8311_codec.h"
+#include "es7210_adc.h"
 #include "esp_log.h"
 
 #define I2S_MCLK 2
@@ -12,11 +13,13 @@
 #define I2S_DOUT 47
 #define I2S_DIN  39
 #define ES8311_ADDR 0x30   // esp_codec_dev wants 8-bit addr (0x18<<1); it >>1 internally
+#define ES7210_ADDR 0x80   // 0x40<<1
 #define SAMPLE_RATE 16000
 
 static const char *TAG = "bsp_audio";
 static i2s_chan_handle_t s_tx, s_rx;
-static esp_codec_dev_handle_t s_out;
+static esp_codec_dev_handle_t s_out, s_in;
+static const audio_codec_data_if_t *s_data;
 
 // Exposed so the ES7210 capture task (later) can reuse the same RX channel.
 i2s_chan_handle_t bsp_audio_i2s_rx(void) { return s_rx; }
@@ -44,8 +47,9 @@ esp_err_t bsp_audio_init(void)
     const audio_codec_ctrl_if_t *ctrl = audio_codec_new_i2c_ctrl(&ic);
     const audio_codec_gpio_if_t *gpio = audio_codec_new_gpio();
     audio_codec_i2s_cfg_t isc = { .port = 0, .tx_handle = s_tx, .rx_handle = s_rx };
-    const audio_codec_data_if_t *data = audio_codec_new_i2s_data(&isc);
+    s_data = audio_codec_new_i2s_data(&isc);
 
+    // --- Output: ES8311 DAC ---
     es8311_codec_cfg_t es = {
         .ctrl_if = ctrl,
         .gpio_if = gpio,
@@ -58,22 +62,43 @@ esp_err_t bsp_audio_init(void)
     if (!codec) { ESP_LOGE(TAG, "es8311_codec_new failed"); return ESP_FAIL; }
 
     esp_codec_dev_cfg_t dc = {
-        .dev_type = ESP_CODEC_DEV_TYPE_OUT,
-        .codec_if = codec,
-        .data_if = data,
+        .dev_type = ESP_CODEC_DEV_TYPE_OUT, .codec_if = codec, .data_if = s_data,
     };
     s_out = esp_codec_dev_new(&dc);
-    if (!s_out) { ESP_LOGE(TAG, "esp_codec_dev_new failed"); return ESP_FAIL; }
-
+    if (!s_out) { ESP_LOGE(TAG, "esp_codec_dev_new(out) failed"); return ESP_FAIL; }
     esp_codec_dev_set_out_vol(s_out, 70);
-    esp_codec_dev_sample_info_t fs = {
-        .sample_rate = SAMPLE_RATE, .channel = 1, .bits_per_sample = 16,
-    };
-    int r = esp_codec_dev_open(s_out, &fs);
-    if (r != 0) { ESP_LOGE(TAG, "codec_dev_open failed: %d", r); return ESP_FAIL; }
-
+    esp_codec_dev_sample_info_t fs = { .sample_rate = SAMPLE_RATE, .channel = 1, .bits_per_sample = 16 };
+    if (esp_codec_dev_open(s_out, &fs) != 0) { ESP_LOGE(TAG, "open(out) failed"); return ESP_FAIL; }
     ESP_LOGI(TAG, "ES8311 output ready (16k/16/mono)");
+
+    // --- Input: ES7210 ADC (mic1) ---
+    audio_codec_i2c_cfg_t ic2 = { .port = 0, .addr = ES7210_ADDR, .bus_handle = bsp_i2c_bus() };
+    const audio_codec_ctrl_if_t *ctrl2 = audio_codec_new_i2c_ctrl(&ic2);
+    es7210_codec_cfg_t es7 = {
+        .ctrl_if = ctrl2,
+        .master_mode = false,
+        .mic_selected = ES7210_SEL_MIC1,
+        .mclk_src = ES7210_MCLK_FROM_PAD,
+    };
+    const audio_codec_if_t *adc = es7210_codec_new(&es7);
+    if (!adc) { ESP_LOGE(TAG, "es7210_codec_new failed"); return ESP_FAIL; }
+    esp_codec_dev_cfg_t dc2 = {
+        .dev_type = ESP_CODEC_DEV_TYPE_IN, .codec_if = adc, .data_if = s_data,
+    };
+    s_in = esp_codec_dev_new(&dc2);
+    if (!s_in) { ESP_LOGE(TAG, "esp_codec_dev_new(in) failed"); return ESP_FAIL; }
+    esp_codec_dev_sample_info_t fsi = { .sample_rate = SAMPLE_RATE, .channel = 1, .bits_per_sample = 16 };
+    if (esp_codec_dev_open(s_in, &fsi) != 0) { ESP_LOGE(TAG, "open(in) failed"); return ESP_FAIL; }
+    esp_codec_dev_set_in_gain(s_in, 30.0);
+    ESP_LOGI(TAG, "ES7210 input ready (16k/16/mono, mic1)");
+
     return ESP_OK;
+}
+
+esp_err_t bsp_audio_read(int16_t *pcm, size_t samples)
+{
+    int r = esp_codec_dev_read(s_in, (void *) pcm, samples * sizeof(int16_t));
+    return r == 0 ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t bsp_audio_play(const int16_t *pcm, size_t samples)

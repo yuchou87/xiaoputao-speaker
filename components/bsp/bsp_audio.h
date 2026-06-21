@@ -8,4 +8,5 @@
 // Format: 16 kHz, 16-bit, mono.
 esp_err_t bsp_audio_init(void);
 esp_err_t bsp_audio_play(const int16_t *pcm, size_t samples);  // blocking
+esp_err_t bsp_audio_read(int16_t *pcm, size_t samples);        // blocking, from ES7210 mic
 void bsp_audio_set_volume(int pct);   // 0..100

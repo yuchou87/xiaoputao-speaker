@@ -89,6 +89,18 @@ void app_main(void)
         ESP_LOGI(TAG, "playing 1kHz test tone x2");
         for (int k = 0; k < 2; k++) bsp_audio_play(s_tone, 16000);
         ESP_LOGI(TAG, "tone done");
+
+        // Loopback: record 3s from ES7210 mic, then play it back on ES8311.
+        size_t n = 16000 * 3;
+        int16_t *rec = heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+        if (rec) {
+            ESP_LOGI(TAG, "recording 3s from mic... (speak now)");
+            bsp_audio_read(rec, n);
+            ESP_LOGI(TAG, "playing recording back");
+            bsp_audio_play(rec, n);
+            ESP_LOGI(TAG, "loopback done");
+            heap_caps_free(rec);
+        }
     } else {
         ESP_LOGE(TAG, "audio init failed (continuing)");
     }
