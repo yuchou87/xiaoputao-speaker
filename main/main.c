@@ -6,6 +6,7 @@
 #include "bsp_exio.h"
 #include "st77916_panel.h"
 #include "bsp_lvgl.h"
+#include "cst816.h"
 #include "lvgl.h"
 
 static const char *TAG = "xpt";
@@ -21,6 +22,15 @@ static void i2c_scan(void)
         }
     }
     ESP_LOGI(TAG, "I2C scan done, %d device(s)", found);
+}
+
+static void tap_event_cb(lv_event_t *e)
+{
+    static int count = 0;
+    lv_obj_t *lbl = (lv_obj_t *) lv_event_get_user_data(e);
+    count++;
+    lv_label_set_text_fmt(lbl, "TAP: %d", count);
+    ESP_LOGI(TAG, "touch tap #%d", count);
 }
 
 void app_main(void)
@@ -47,11 +57,23 @@ void app_main(void)
 
     // LVGL on top of the panel: draw a centered label.
     ESP_ERROR_CHECK(bsp_lvgl_init());
+    // Touch: CST816 -> LVGL pointer indev.
+    Touch_Init();
+    Touch_LVGL_Init();
+
     bsp_lvgl_lock();
-    lv_obj_t *label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, "XiaoPuTao P0\nLVGL OK");
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(label);
+    lv_obj_t *title = lv_label_create(lv_scr_act());
+    lv_label_set_text(title, "XiaoPuTao P0");
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -50);
+
+    // Tap test: a button with a counter, proves touch -> LVGL works.
+    lv_obj_t *btn = lv_btn_create(lv_scr_act());
+    lv_obj_set_size(btn, 160, 70);
+    lv_obj_center(btn);
+    lv_obj_t *btn_lbl = lv_label_create(btn);
+    lv_label_set_text(btn_lbl, "TAP: 0");
+    lv_obj_center(btn_lbl);
+    lv_obj_add_event_cb(btn, tap_event_cb, LV_EVENT_CLICKED, btn_lbl);
     bsp_lvgl_unlock();
-    ESP_LOGI(TAG, "LVGL label shown");
+    ESP_LOGI(TAG, "UI ready (tap the button)");
 }
