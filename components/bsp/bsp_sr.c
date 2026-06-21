@@ -22,7 +22,14 @@ static bool s_echo_active;
 static int16_t *s_echo_buf;
 static size_t s_echo_len;
 
+static bsp_sr_audio_cb_t s_audio_cb;
+static volatile bool s_streaming;
+
 void bsp_sr_echo(void) { s_echo_req = true; }
+
+void bsp_sr_set_audio_cb(bsp_sr_audio_cb_t cb) { s_audio_cb = cb; }
+
+void bsp_sr_set_streaming(bool on) { s_streaming = on; }
 
 static void feed_task(void *arg)
 {
@@ -63,6 +70,10 @@ static void detect_task(void *arg)
     while (1) {
         afe_fetch_result_t *res = s_afe->fetch(s_afe_data);
         if (!res || res->ret_value == ESP_FAIL) continue;
+        // Forward AFE-processed audio to streaming callback if enabled.
+        if (s_streaming && s_audio_cb && res->data && res->data_size > 0) {
+            s_audio_cb((const int16_t *)res->data, res->data_size / sizeof(int16_t));
+        }
         // Single-channel AFE signals WAKENET_DETECTED; multi-channel ("RMNM")
         // signals WAKENET_CHANNEL_VERIFIED after picking the best mic.
         if (res->wakeup_state == WAKENET_DETECTED || res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
