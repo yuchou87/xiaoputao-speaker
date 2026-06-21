@@ -364,8 +364,13 @@ esp_err_t voice_app_start(void)
         return ESP_ERR_NO_MEM;
     }
     /* 8KB stack: glm_audio_out_play -> bsp_audio_play uses a 4KB stack scratch
-     * buffer; 4096 overflowed and crashed mid-playback. */
-    if (xTaskCreate(downlink_task, "voice_downlink", 8192, NULL, 5, &s_downlink_task) != pdPASS) {
+     * buffer; 4096 overflowed and crashed mid-playback.
+     * Pinned to core 1 at priority 6 (above the AFE detect task at 5): playback
+     * is real-time critical and must preempt wake detection, otherwise the AFE
+     * starves it of CPU and the codec underruns (stutter). WS receive stays on
+     * core 0, unaffected. */
+    if (xTaskCreatePinnedToCore(downlink_task, "voice_downlink", 8192, NULL, 6,
+                                &s_downlink_task, 1) != pdPASS) {
         ESP_LOGE(TAG, "failed to create downlink task");
         return ESP_ERR_NO_MEM;
     }
