@@ -109,6 +109,12 @@ esp_err_t bsp_wifi_init(void)
         return ret;
     }
 
+    /* Disable modem power-save: the default WIFI_PS_MIN_MODEM sleeps between
+     * DTIM beacons and intermittently stalls TCP writes, which surfaces as
+     * transport_poll_write() timeouts -> WebSocket disconnect. The continuous
+     * audio uplink needs a steady low-latency link. */
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
     s_initialized = true;
     ESP_LOGI(TAG, "WiFi initialized");
     return ESP_OK;

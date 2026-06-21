@@ -25,8 +25,9 @@ static size_t s_echo_len;
 static bsp_sr_audio_cb_t s_audio_cb;
 static volatile bool s_streaming;
 
-/* Digital gain applied to AFE output before uplink (see detect_task). */
-#define BSP_SR_UPLINK_GAIN 12
+/* Digital gain applied to AFE output before uplink (see detect_task).
+ * Backend measured speech at RMS ~350 with 12x; 20x lands it ~580 (thresh 400). */
+#define BSP_SR_UPLINK_GAIN 20
 
 void bsp_sr_echo(void) { s_echo_req = true; }
 
