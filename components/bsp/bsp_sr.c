@@ -27,24 +27,24 @@ void bsp_sr_echo(void) { s_echo_req = true; }
 static void feed_task(void *arg)
 {
     int chunk = s_afe->get_feed_chunksize(s_afe_data);
-    int nch = s_afe->get_feed_channel_num(s_afe_data);
+    int nch = s_afe->get_feed_channel_num(s_afe_data);   // 4 for "RMNM"
     int16_t *buf = heap_caps_malloc(chunk * nch * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     ESP_LOGI(TAG, "feed: chunk=%d nch=%d", chunk, nch);
     while (buf) {
-        bsp_audio_read(buf, chunk * nch);
+        bsp_audio_read_raw(buf, chunk * nch);
         s_afe->feed(s_afe_data, buf);
 
-        // Echo feature: capture the next 2s of mic into s_echo_buf, then play back.
+        // Echo feature: capture the next 2s of one mic channel, then play back.
+        // Raw layout is "RMNM" -> mic is channel index 1.
         if (s_echo_req && !s_echo_active) {
             if (!s_echo_buf) s_echo_buf = heap_caps_malloc(ECHO_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
             if (s_echo_buf) { s_echo_active = true; s_echo_len = 0; ESP_LOGI(TAG, "echo: capturing 2s..."); }
             s_echo_req = false;
         }
         if (s_echo_active) {
-            size_t take = chunk * nch;
-            if (s_echo_len + take > ECHO_SAMPLES) take = ECHO_SAMPLES - s_echo_len;
-            memcpy(s_echo_buf + s_echo_len, buf, take * sizeof(int16_t));
-            s_echo_len += take;
+            for (int f = 0; f < chunk && s_echo_len < ECHO_SAMPLES; f++) {
+                s_echo_buf[s_echo_len++] = buf[f * nch + 1];   // mic channel
+            }
             if (s_echo_len >= ECHO_SAMPLES) {
                 s_echo_active = false;
                 int32_t peak = 0;
@@ -63,8 +63,10 @@ static void detect_task(void *arg)
     while (1) {
         afe_fetch_result_t *res = s_afe->fetch(s_afe_data);
         if (!res || res->ret_value == ESP_FAIL) continue;
-        if (res->wakeup_state == WAKENET_DETECTED) {
-            ESP_LOGI(TAG, "WAKE DETECTED");
+        // Single-channel AFE signals WAKENET_DETECTED; multi-channel ("RMNM")
+        // signals WAKENET_CHANNEL_VERIFIED after picking the best mic.
+        if (res->wakeup_state == WAKENET_DETECTED || res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
+            ESP_LOGI(TAG, "WAKE (state=%d, ch=%d)", res->wakeup_state, res->trigger_channel_id);
             if (s_cb) s_cb();
         }
     }
@@ -80,7 +82,9 @@ esp_err_t bsp_sr_start(bsp_sr_wake_cb_t cb)
     }
     for (int i = 0; i < models->num; i++) ESP_LOGI(TAG, "model[%d]=%s", i, models->model_name[i]);
 
-    afe_config_t *cfg = afe_config_init("M", models, AFE_TYPE_SR, AFE_MODE_LOW_COST);
+    // "RMNM": ch0=reference(AEC), ch1=mic, ch2=null, ch3=mic — matches the board's
+    // ES7210 4-channel raw layout (bsp_get_input_format). Enables mic array + AEC.
+    afe_config_t *cfg = afe_config_init("RMNM", models, AFE_TYPE_SR, AFE_MODE_LOW_COST);
     s_afe = esp_afe_handle_from_config(cfg);
     s_afe_data = s_afe->create_from_config(cfg);
     afe_config_free(cfg);

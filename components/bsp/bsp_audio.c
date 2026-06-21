@@ -79,10 +79,12 @@ esp_err_t bsp_audio_init(void)
     // --- Input: ES7210 ADC (mic1) ---
     audio_codec_i2c_cfg_t ic2 = { .port = 0, .addr = ES7210_ADDR, .bus_handle = bsp_i2c_bus() };
     const audio_codec_ctrl_if_t *ctrl2 = audio_codec_new_i2c_ctrl(&ic2);
+    // All 4 ES7210 channels (board layout = [R, M, N, M], AFE format "RMNM";
+    // ch0 R is the hardware echo reference -> enables AEC/barge-in).
     es7210_codec_cfg_t es7 = {
         .ctrl_if = ctrl2,
         .master_mode = false,
-        .mic_selected = ES7210_SEL_MIC1,
+        .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3 | ES7210_SEL_MIC4,
         .mclk_src = ES7210_MCLK_FROM_PAD,
     };
     const audio_codec_if_t *adc = es7210_codec_new(&es7);
@@ -92,17 +94,19 @@ esp_err_t bsp_audio_init(void)
     };
     s_in = esp_codec_dev_new(&dc2);
     if (!s_in) { ESP_LOGE(TAG, "esp_codec_dev_new(in) failed"); return ESP_FAIL; }
-    esp_codec_dev_sample_info_t fsi = { .sample_rate = SAMPLE_RATE, .channel = 1, .bits_per_sample = 16 };
+    // 2ch x 32-bit frame == 4 x int16 raw channels (matches demo byte layout).
+    esp_codec_dev_sample_info_t fsi = { .sample_rate = SAMPLE_RATE, .channel = 2, .bits_per_sample = 32 };
     if (esp_codec_dev_open(s_in, &fsi) != 0) { ESP_LOGE(TAG, "open(in) failed"); return ESP_FAIL; }
     esp_codec_dev_set_in_gain(s_in, 30.0);
-    ESP_LOGI(TAG, "ES7210 input ready (16k/16/mono, mic1)");
+    ESP_LOGI(TAG, "ES7210 input ready (16k, 4ch raw RMNM)");
 
     return ESP_OK;
 }
 
-esp_err_t bsp_audio_read(int16_t *pcm, size_t samples)
+// Read raw interleaved 4-channel int16 frames (n_samples = frames * 4).
+esp_err_t bsp_audio_read_raw(int16_t *buf, size_t n_samples)
 {
-    int r = esp_codec_dev_read(s_in, (void *) pcm, samples * sizeof(int16_t));
+    int r = esp_codec_dev_read(s_in, (void *) buf, n_samples * sizeof(int16_t));
     return r == 0 ? ESP_OK : ESP_FAIL;
 }
 
