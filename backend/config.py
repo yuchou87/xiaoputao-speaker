@@ -1,6 +1,11 @@
 """Backend configuration from environment (.env)."""
 import os
 
+# Use the China HuggingFace mirror by default (much faster downloads here).
+# Must be set before huggingface_hub is imported; config is imported first.
+# Override by exporting HF_ENDPOINT yourself.
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
 
 def _load_dotenv(path: str = ".env") -> None:
     if not os.path.exists(path):
