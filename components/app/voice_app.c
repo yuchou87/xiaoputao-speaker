@@ -75,7 +75,7 @@ static uint8_t        *s_uplink_q_storage = NULL;   /* PSRAM */
  *
  * 24 kHz mono int16 -> 48000 bytes/s. ~96 KB ~= 2s of headroom, placed in PSRAM.
  */
-#define DOWNLINK_RB_BYTES   (96 * 1024)
+#define DOWNLINK_RB_BYTES   (192 * 1024)   /* ~6s @16k; headroom for jitter */
 #define DOWNLINK_DRAIN_MAX  4096   /* max bytes handed to play per iteration */
 
 static RingbufHandle_t s_downlink_rb = NULL;

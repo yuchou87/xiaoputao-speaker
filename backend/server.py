@@ -29,10 +29,13 @@ async def run_pipeline(ws, utterance: np.ndarray):
     print(f"  STT: {user_text!r}\n  LLM: {reply_text!r}\n  TTS: {len(audio24k)} samples @24k")
     await ws.send(evt("conversation.item.input_audio_transcription.completed", transcript=user_text))
     await ws.send(evt("response.created"))
-    chunk = config.OUT_RATE * 40 // 1000  # ~40ms
+    chunk = config.OUT_RATE * 40 // 1000  # ~40ms of audio per delta
     for i in range(0, len(audio24k), chunk):
         await ws.send(evt("response.audio.delta", delta=pcm16_to_b64(audio24k[i:i + chunk])))
-        await asyncio.sleep(0.005)
+        # Pace near real-time: the device's downlink ring buffer only holds a few
+        # seconds, so bursting the whole reply overflows it and the tail is dropped
+        # (playback cut short). Send a hair faster than playback to avoid underrun.
+        await asyncio.sleep(0.036)
     await ws.send(evt("response.audio.done"))
     await ws.send(evt("response.done", response={"status": "completed"}))
 
