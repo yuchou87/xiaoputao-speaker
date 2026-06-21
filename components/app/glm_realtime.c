@@ -315,6 +315,11 @@ esp_err_t glm_rt_start(void)
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms   = 10000,
         .buffer_size          = 8192,   /* larger RX buffer for big text frames */
+        /* The WS task runs the full recv->event->dispatch_message->cJSON_Parse
+         * + base64_decode chain for each audio delta. The ~4KB default stack
+         * overflows on large deltas and corrupts kernel memory (StoreProhibited
+         * in xTaskIncrementTick). Give it generous headroom. */
+        .task_stack           = 12288,
     };
 
     s_client = esp_websocket_client_init(&ws_cfg);
