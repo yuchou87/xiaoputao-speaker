@@ -150,7 +150,11 @@ static void on_glm_event(const char *type)
         return;
     }
 
-    if (strcmp(type, "input_audio_buffer.speech_started") == 0) {
+    if (strcmp(type, "_ws_connected") == 0) {
+        ui_set_status("已连接云端");
+    } else if (strcmp(type, "_ws_disconnected") == 0) {
+        ui_set_status("重连中...");
+    } else if (strcmp(type, "input_audio_buffer.speech_started") == 0) {
         s_last_activity_us = esp_timer_get_time();
         set_state(VOICE_LISTENING, "聆听");
     } else if (strcmp(type, "response.audio.done") == 0) {
@@ -159,7 +163,7 @@ static void on_glm_event(const char *type)
         set_state(VOICE_IDLE, "待命");
     } else if (strcmp(type, "error") == 0) {
         ESP_LOGE(TAG, "GLM error event");
-        ui_set_status("出错");
+        ui_set_status("云端错误");
     } else {
         ESP_LOGD(TAG, "GLM event: %s", type);
     }

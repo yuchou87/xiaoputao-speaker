@@ -101,7 +101,10 @@ void app_main(void)
     ESP_ERROR_CHECK(bsp_nvs_init());
 
     /* ---- 4/5. Provisioning vs WiFi connect ---- */
-    if (!bsp_nvs_has(NVS_KEY_WIFI_SSID)) {
+    char ssid[33] = {0};
+    bsp_nvs_get_str(NVS_KEY_WIFI_SSID, ssid, sizeof(ssid));
+
+    if (!bsp_nvs_has(NVS_KEY_WIFI_SSID) || strlen(ssid) == 0) {
         /* No credentials — start captive-portal provisioning */
         ui_set_status("配网: 连 XiaoPuTao-Setup\n浏览器开 192.168.4.1");
         ESP_LOGI(TAG, "no WiFi creds, starting SoftAP provisioning");
@@ -112,15 +115,16 @@ void app_main(void)
         ui_set_status("连接 WiFi...");
         ESP_ERROR_CHECK(bsp_wifi_init());
 
-        char ssid[33]  = {0};
         char pass[65]  = {0};
-        bsp_nvs_get_str(NVS_KEY_WIFI_SSID, ssid, sizeof(ssid));
         bsp_nvs_get_str(NVS_KEY_WIFI_PASS, pass, sizeof(pass));
 
         ESP_LOGI(TAG, "connecting to SSID: %s", ssid);
         esp_err_t r = bsp_wifi_connect_sta(ssid, pass, 20000);
 
         if (r == ESP_OK) {
+            /* Reset fail counter on success */
+            bsp_nvs_set_str("wifi_fails", "0");
+
             char ip[32] = {0};
             bsp_wifi_get_ip(ip, sizeof(ip));
 
@@ -138,8 +142,27 @@ void app_main(void)
             }
         } else {
             ESP_LOGE(TAG, "WiFi connect failed: %s", esp_err_to_name(r));
-            ui_set_status("WiFi 失败,重启配网");
-            vTaskDelay(pdMS_TO_TICKS(3000));
+
+            /* Increment NVS fail counter; reprovision after 3 consecutive failures */
+            char fail_buf[16] = {0};
+            bsp_nvs_get_str("wifi_fails", fail_buf, sizeof(fail_buf));
+            int fail_count = atoi(fail_buf) + 1;
+            snprintf(fail_buf, sizeof(fail_buf), "%d", fail_count);
+            bsp_nvs_set_str("wifi_fails", fail_buf);
+            ESP_LOGW(TAG, "WiFi fail count: %d", fail_count);
+
+            if (fail_count >= 3) {
+                /* Bad credentials — clear creds and reprovision */
+                bsp_nvs_set_str(NVS_KEY_WIFI_SSID, "");
+                bsp_nvs_set_str(NVS_KEY_WIFI_PASS, "");
+                bsp_nvs_set_str("wifi_fails", "0");
+                ui_set_status("WiFi 多次失败,重新配网");
+                ESP_LOGW(TAG, "clearing WiFi creds, will reprovision on next boot");
+                vTaskDelay(pdMS_TO_TICKS(2000));
+            } else {
+                ui_set_status("WiFi 失败,重启中...");
+                vTaskDelay(pdMS_TO_TICKS(3000));
+            }
             esp_restart();
         }
     }

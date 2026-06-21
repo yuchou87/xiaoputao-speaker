@@ -186,12 +186,14 @@ static void ws_event_handler(void *arg, esp_event_base_t base,
         s_connected = true;
         rx_buf_reset();
         send_session_update(s_client);
+        if (s_event_cb) s_event_cb("_ws_connected");
         break;
 
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "WebSocket disconnected");
         s_connected = false;
         rx_buf_reset();
+        if (s_event_cb) s_event_cb("_ws_disconnected");
         break;
 
     case WEBSOCKET_EVENT_DATA:
