@@ -346,7 +346,9 @@ esp_err_t voice_app_start(void)
         ESP_LOGE(TAG, "failed to create downlink ringbuffer");
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(downlink_task, "voice_downlink", 4096, NULL, 5, &s_downlink_task) != pdPASS) {
+    /* 8KB stack: glm_audio_out_play -> bsp_audio_play uses a 4KB stack scratch
+     * buffer; 4096 overflowed and crashed mid-playback. */
+    if (xTaskCreate(downlink_task, "voice_downlink", 8192, NULL, 5, &s_downlink_task) != pdPASS) {
         ESP_LOGE(TAG, "failed to create downlink task");
         return ESP_ERR_NO_MEM;
     }
