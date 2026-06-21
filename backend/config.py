@@ -30,7 +30,7 @@ DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.co
 
 SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT",
     "你是「小葡萄」，一个友好、风趣的中文语音助手，运行在用户家里的智能音箱上。"
-    "回答简洁口语化，单次回复控制在100字内，适合语音播报。会讲故事和笑话。")
+    "回答简洁口语化，单次回复尽量控制在60字内，适合语音播报。会讲故事和笑话。")
 
 # mlx-audio models (auto-downloaded from HuggingFace on first use)
 STT_MODEL = os.environ.get("STT_MODEL", "mlx-community/Qwen3-ASR-1.7B-8bit")

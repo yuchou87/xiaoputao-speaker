@@ -73,7 +73,7 @@ def chat(user_text: str) -> str:
     _history.append({"role": "user", "content": user_text})
     msgs = [{"role": "system", "content": config.SYSTEM_PROMPT}] + _history[-12:]
     resp = _get_deepseek().chat.completions.create(
-        model=config.DEEPSEEK_MODEL, messages=msgs, temperature=0.7, max_tokens=300)
+        model=config.DEEPSEEK_MODEL, messages=msgs, temperature=0.7, max_tokens=160)
     reply = resp.choices[0].message.content.strip()
     _history.append({"role": "assistant", "content": reply})
     return reply

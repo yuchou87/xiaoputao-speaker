@@ -24,7 +24,8 @@ static const char *TAG = "voice_app";
 
 typedef enum {
     VOICE_IDLE = 0,   /* waiting for the wake word */
-    VOICE_LISTENING,  /* streaming mic to GLM, server VAD owns the turn */
+    VOICE_LISTENING,  /* streaming mic; device AFE VAD owns end-of-utterance */
+    VOICE_THINKING,   /* committed; waiting for the backend to produce the reply */
     VOICE_SPEAKING,   /* playing GLM audio deltas */
 } voice_state_t;
 
@@ -35,6 +36,9 @@ static volatile voice_state_t s_state = VOICE_IDLE;
 static volatile int64_t s_last_activity_us = 0;
 
 #define LISTEN_TIMEOUT_US (15LL * 1000 * 1000) /* ~15s with no progress -> IDLE */
+#define THINK_TIMEOUT_US  (40LL * 1000 * 1000)  /* backend builds the full TTS reply
+                                                  before streaming; long replies need
+                                                  generous headroom before giving up */
 
 /* ---- Uplink queue (detect task -> uplink task) ----------------------------- */
 
@@ -88,6 +92,7 @@ static void set_state(voice_state_t next)
     }
     switch (next) {
         case VOICE_LISTENING: ui_set_state(UI_LISTENING); break;
+        case VOICE_THINKING:  ui_set_state(UI_THINKING);  break;
         case VOICE_SPEAKING:  ui_set_state(UI_SPEAKING);  break;
         case VOICE_IDLE:
         default:              ui_set_state(UI_IDLE);       break;
@@ -120,7 +125,7 @@ static void on_eou(void)
     bsp_sr_set_streaming(false);
     glm_rt_commit();
     s_last_activity_us = esp_timer_get_time();
-    ui_set_state(UI_THINKING);
+    set_state(VOICE_THINKING);
 }
 
 /* Runs on the bsp_sr feed task. Copy + enqueue, never block. */
@@ -275,11 +280,12 @@ static void watchdog_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(1000));
         /* Time out both LISTENING and SPEAKING if no progress, so the state
          * machine can't wedge in "聆听" or "说话". */
-        if (s_state == VOICE_LISTENING || s_state == VOICE_SPEAKING) {
+        voice_state_t st = s_state;
+        if (st == VOICE_LISTENING || st == VOICE_THINKING || st == VOICE_SPEAKING) {
+            int64_t budget = (st == VOICE_THINKING) ? THINK_TIMEOUT_US : LISTEN_TIMEOUT_US;
             int64_t now = esp_timer_get_time();
-            if (now - s_last_activity_us > LISTEN_TIMEOUT_US) {
-                ESP_LOGW(TAG, "turn timeout (%s), returning to IDLE",
-                         s_state == VOICE_LISTENING ? "listening" : "speaking");
+            if (now - s_last_activity_us > budget) {
+                ESP_LOGW(TAG, "turn timeout (state=%d), returning to IDLE", st);
                 bsp_sr_set_streaming(false);
                 set_state(VOICE_IDLE);
             }
