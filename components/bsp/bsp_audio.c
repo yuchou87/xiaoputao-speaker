@@ -39,6 +39,9 @@ esp_err_t bsp_audio_init(void)
     if (!s_codec_mutex || !s_in_mutex) { ESP_LOGE(TAG, "codec mutex create failed"); return ESP_ERR_NO_MEM; }
 
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+    // Output silence (zeros) on TX underrun instead of repeating the last DMA
+    // buffer, which otherwise loops as a "噗噗" pop when idle / between replies.
+    cc.auto_clear = true;
     ESP_ERROR_CHECK(i2s_new_channel(&cc, &s_tx, &s_rx));
 
     // This board's ES8311/ES7210 are clocked for 32-bit STEREO I2S slots

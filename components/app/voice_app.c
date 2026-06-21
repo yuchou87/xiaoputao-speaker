@@ -224,7 +224,7 @@ static void audio_out_wrapper(const uint8_t *pcm16, size_t len)
 /* Dedicated downlink task: drain the ringbuffer and play (may block on codec). */
 /* Jitter buffer: accumulate this many bytes (24kHz PCM16) before starting to
  * play a reply, so WiFi delivery jitter doesn't underrun the codec (stutter). */
-#define DOWNLINK_PREBUF_BYTES  (24000 * 2 / 2)   /* ~0.5s @24k */
+#define DOWNLINK_PREBUF_BYTES  (24000 * 2 * 4 / 5)   /* ~0.8s @24k */
 
 static void downlink_task(void *arg)
 {
