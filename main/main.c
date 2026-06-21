@@ -7,7 +7,11 @@
 #include "st77916_panel.h"
 #include "bsp_lvgl.h"
 #include "cst816.h"
+#include "bsp_audio.h"
 #include "lvgl.h"
+#include <math.h>
+
+static int16_t s_tone[16000];   // 1s @ 16kHz, 16-bit mono
 
 static const char *TAG = "xpt";
 
@@ -76,4 +80,16 @@ void app_main(void)
     lv_obj_add_event_cb(btn, tap_event_cb, LV_EVENT_CLICKED, btn_lbl);
     bsp_lvgl_unlock();
     ESP_LOGI(TAG, "UI ready (tap the button)");
+
+    // Audio out: ES8311 + I2S. Play a 1 kHz test tone at boot. Non-fatal.
+    if (bsp_audio_init() == ESP_OK) {
+        for (int i = 0; i < 16000; i++) {
+            s_tone[i] = (int16_t) (8000.0f * sinf(2.0f * (float) M_PI * 1000.0f * i / 16000.0f));
+        }
+        ESP_LOGI(TAG, "playing 1kHz test tone x2");
+        for (int k = 0; k < 2; k++) bsp_audio_play(s_tone, 16000);
+        ESP_LOGI(TAG, "tone done");
+    } else {
+        ESP_LOGE(TAG, "audio init failed (continuing)");
+    }
 }
