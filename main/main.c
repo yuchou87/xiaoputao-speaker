@@ -99,28 +99,8 @@ void app_main(void)
             s_tone[i] = (int16_t) (2000.0f * sinf(2.0f * (float) M_PI * 1000.0f * i / 16000.0f));
         }
 
-        // Loopback: record 3s from ES7210 mic, then play it back on ES8311.
-        size_t n = 16000 * 3;
-        int16_t *rec = heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-        if (rec) {
-            ESP_LOGI(TAG, "recording 3s from mic... (speak now)");
-            bsp_audio_read(rec, n);
-            // Diagnostic: is the mic capturing anything? (read over serial)
-            int32_t peak = 0; int64_t sumsq = 0;
-            for (size_t i = 0; i < n; i++) {
-                int32_t v = rec[i]; if (v < 0) v = -v;
-                if (v > peak) peak = v;
-                sumsq += (int64_t) rec[i] * rec[i];
-            }
-            ESP_LOGI(TAG, "MIC STATS: peak=%d rms=%d (0=dead mic)",
-                     (int) peak, (int) (sumsq / n > 0 ? (int) __builtin_sqrt((double)(sumsq / n)) : 0));
-            ESP_LOGI(TAG, "playing recording back");
-            bsp_audio_play(rec, n);
-            ESP_LOGI(TAG, "loopback done");
-            heap_caps_free(rec);
-        }
-
         // Wake word: esp-sr AFE + WakeNet (builtin 你好小智 for now).
+        // Clean boot: no test tone / loopback — go straight to wake standby.
         bsp_sr_start(on_wake);
     } else {
         ESP_LOGE(TAG, "audio init failed (continuing)");
