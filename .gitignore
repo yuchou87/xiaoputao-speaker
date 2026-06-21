@@ -1,0 +1,15 @@
+# ESP-IDF build artifacts
+/build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# Secrets — code repo is PUBLIC, never commit credentials.
+# WiFi password / GLM API key / Mac mini address are provisioned at runtime
+# (SoftAP captive portal -> NVS). See design.md §4.4.
+secrets.h
+secrets.*
+!secrets.example.h
+*.pem
+*.key
