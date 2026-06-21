@@ -1,18 +1,42 @@
 #include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_chip_info.h"
+#include "esp_system.h"
+#include "lvgl.h"
 #include "bsp_i2c.h"
 #include "bsp_exio.h"
+#include "bsp_battery.h"
 #include "st77916_panel.h"
 #include "bsp_lvgl.h"
 #include "cst816.h"
 #include "bsp_audio.h"
-#include "bsp_sr.h"
-#include "bsp_battery.h"
-#include "lvgl.h"
+#include "bsp_nvs.h"
+#include "bsp_wifi.h"
+#include "bsp_prov.h"
+#include "voice_app.h"
 
 static const char *TAG = "xpt";
+
+/* ---------- UI status label ---------- */
+
+static lv_obj_t *s_status_label = NULL;
+
+/*
+ * ui_set_status() — non-static so it overrides the weak stub in voice_app at
+ * link time.  Safe to call from any task after bsp_lvgl_init().
+ */
+void ui_set_status(const char *s)
+{
+    if (!s_status_label) return;
+    bsp_lvgl_lock();
+    lv_label_set_text(s_status_label, s);
+    bsp_lvgl_unlock();
+}
+
+/* ---------- I2C scan (optional, kept for debug) ---------- */
 
 static void i2c_scan(void)
 {
@@ -27,32 +51,22 @@ static void i2c_scan(void)
     ESP_LOGI(TAG, "I2C scan done, %d device(s)", found);
 }
 
-static void tap_event_cb(lv_event_t *e)
-{
-    static int count = 0;
-    lv_obj_t *lbl = (lv_obj_t *) lv_event_get_user_data(e);
-    count++;
-    lv_label_set_text_fmt(lbl, "TAP: %d", count);
-    ESP_LOGI(TAG, "touch tap #%d", count);
-}
-
-static void on_wake(void)
-{
-    ESP_LOGI(TAG, "=== WAKE === (speak now, will echo back)");
-    bsp_sr_echo();   // capture 2s and play it back (no beep)
-}
+/* ---------- app_main ---------- */
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "xiaoputao-speaker P0 bring-up boot");
+    ESP_LOGI(TAG, "xiaoputao-speaker boot");
 
     esp_chip_info_t chip;
     esp_chip_info(&chip);
-    ESP_LOGI(TAG, "chip: %s, %d core(s), rev %d", CONFIG_IDF_TARGET, chip.cores, chip.revision);
+    ESP_LOGI(TAG, "chip: %s, %d core(s), rev %d",
+             CONFIG_IDF_TARGET, chip.cores, chip.revision);
 
     size_t psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "PSRAM free: %u bytes (%.1f MB)", (unsigned) psram, psram / 1048576.0);
+    ESP_LOGI(TAG, "PSRAM free: %u bytes (%.1f MB)",
+             (unsigned)psram, psram / 1048576.0);
 
+    /* ---- 1. Hardware init ---- */
     ESP_ERROR_CHECK(bsp_i2c_init());
     i2c_scan();
 
@@ -62,39 +76,73 @@ void app_main(void)
     bsp_battery_init();
     ESP_LOGI(TAG, "battery: %.2f V", bsp_battery_voltage());
 
-    // Display: ST77916 QSPI + backlight. LCD_Init() draws a color-bar test
-    // pattern (test_draw_bitmap) so we can confirm the panel lights up.
     LCD_Init();
-    ESP_LOGI(TAG, "LCD init done (color bars should be visible)");
+    ESP_LOGI(TAG, "LCD init done");
 
-    // LVGL on top of the panel: draw a centered label.
     ESP_ERROR_CHECK(bsp_lvgl_init());
-    // Touch: CST816 -> LVGL pointer indev.
     Touch_Init();
     Touch_LVGL_Init();
 
+    /* ---- 2. Create status label ---- */
     bsp_lvgl_lock();
-    lv_obj_t *title = lv_label_create(lv_scr_act());
-    lv_label_set_text(title, "XiaoPuTao P0");
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -50);
-
-    // Tap test: a button with a counter, proves touch -> LVGL works.
-    lv_obj_t *btn = lv_btn_create(lv_scr_act());
-    lv_obj_set_size(btn, 160, 70);
-    lv_obj_center(btn);
-    lv_obj_t *btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, "TAP: 0");
-    lv_obj_center(btn_lbl);
-    lv_obj_add_event_cb(btn, tap_event_cb, LV_EVENT_CLICKED, btn_lbl);
+    s_status_label = lv_label_create(lv_scr_act());
+    lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_status_label, lv_pct(85));
+    lv_obj_align(s_status_label, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(s_status_label, "启动中");
     bsp_lvgl_unlock();
-    ESP_LOGI(TAG, "UI ready (tap the button)");
 
-    // Audio: ES8311 out + ES7210 in. Non-fatal if it fails.
-    if (bsp_audio_init() == ESP_OK) {
-        // Clean boot: no test tone / loopback. Go straight to wake standby;
-        // saying the wake word echoes back 2s of your voice (see on_wake).
-        bsp_sr_start(on_wake);
-    } else {
+    /* ---- Audio init ---- */
+    if (bsp_audio_init() != ESP_OK) {
         ESP_LOGE(TAG, "audio init failed (continuing)");
     }
+
+    /* ---- 3. NVS ---- */
+    ESP_ERROR_CHECK(bsp_nvs_init());
+
+    /* ---- 4/5. Provisioning vs WiFi connect ---- */
+    if (!bsp_nvs_has(NVS_KEY_WIFI_SSID)) {
+        /* No credentials — start captive-portal provisioning */
+        ui_set_status("配网: 连 XiaoPuTao-Setup\n浏览器开 192.168.4.1");
+        ESP_LOGI(TAG, "no WiFi creds, starting SoftAP provisioning");
+        bsp_prov_start_softap();   /* blocks until form submitted */
+        esp_restart();
+    } else {
+        /* Have credentials — try to connect */
+        ui_set_status("连接 WiFi...");
+        ESP_ERROR_CHECK(bsp_wifi_init());
+
+        char ssid[33]  = {0};
+        char pass[65]  = {0};
+        bsp_nvs_get_str(NVS_KEY_WIFI_SSID, ssid, sizeof(ssid));
+        bsp_nvs_get_str(NVS_KEY_WIFI_PASS, pass, sizeof(pass));
+
+        ESP_LOGI(TAG, "connecting to SSID: %s", ssid);
+        esp_err_t r = bsp_wifi_connect_sta(ssid, pass, 20000);
+
+        if (r == ESP_OK) {
+            char ip[32] = {0};
+            bsp_wifi_get_ip(ip, sizeof(ip));
+
+            char status_buf[64];
+            snprintf(status_buf, sizeof(status_buf), "已连接\n%s", ip);
+            ui_set_status(status_buf);
+            ESP_LOGI(TAG, "WiFi connected, IP: %s", ip);
+
+            esp_err_t va = voice_app_start();
+            if (va == ESP_OK) {
+                ui_set_status("待命 (说: 你好小智)");
+            } else {
+                ESP_LOGE(TAG, "voice_app_start failed: %s", esp_err_to_name(va));
+                ui_set_status("语音初始化失败");
+            }
+        } else {
+            ESP_LOGE(TAG, "WiFi connect failed: %s", esp_err_to_name(r));
+            ui_set_status("WiFi 失败,重启配网");
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            esp_restart();
+        }
+    }
+
+    /* FreeRTOS keeps tasks (LVGL tick, voice tasks) running */
 }
