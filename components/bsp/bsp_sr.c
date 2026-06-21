@@ -37,7 +37,7 @@ static void feed_task(void *arg)
         // Echo feature: capture the next 2s of mic into s_echo_buf, then play back.
         if (s_echo_req && !s_echo_active) {
             if (!s_echo_buf) s_echo_buf = heap_caps_malloc(ECHO_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-            if (s_echo_buf) { s_echo_active = true; s_echo_len = 0; }
+            if (s_echo_buf) { s_echo_active = true; s_echo_len = 0; ESP_LOGI(TAG, "echo: capturing 2s..."); }
             s_echo_req = false;
         }
         if (s_echo_active) {
@@ -47,8 +47,11 @@ static void feed_task(void *arg)
             s_echo_len += take;
             if (s_echo_len >= ECHO_SAMPLES) {
                 s_echo_active = false;
-                ESP_LOGI(TAG, "echo: playing back 2s");
+                int32_t peak = 0;
+                for (size_t i = 0; i < ECHO_SAMPLES; i++) { int32_t v = s_echo_buf[i]; if (v < 0) v = -v; if (v > peak) peak = v; }
+                ESP_LOGI(TAG, "echo: captured peak=%d, playing back 2s", (int) peak);
                 bsp_audio_play(s_echo_buf, ECHO_SAMPLES);   // blocks feed ~2s (ok)
+                ESP_LOGI(TAG, "echo: done");
             }
         }
     }
