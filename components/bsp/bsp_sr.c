@@ -25,6 +25,9 @@ static size_t s_echo_len;
 static bsp_sr_audio_cb_t s_audio_cb;
 static volatile bool s_streaming;
 
+/* Digital gain applied to AFE output before uplink (see detect_task). */
+#define BSP_SR_UPLINK_GAIN 12
+
 void bsp_sr_echo(void) { s_echo_req = true; }
 
 void bsp_sr_set_audio_cb(bsp_sr_audio_cb_t cb) { s_audio_cb = cb; }
@@ -71,8 +74,25 @@ static void detect_task(void *arg)
         afe_fetch_result_t *res = s_afe->fetch(s_afe_data);
         if (!res || res->ret_value == ESP_FAIL) continue;
         // Forward AFE-processed audio to streaming callback if enabled.
+        // The AFE output sits ~20-30 dB below a usable speech level (backend saw
+        // RMS ~80), so apply a fixed digital gain with saturation before sending.
         if (s_streaming && s_audio_cb && res->data && res->data_size > 0) {
-            s_audio_cb((const int16_t *)res->data, res->data_size / sizeof(int16_t));
+            static int16_t gbuf[512];   // detect_task is single-threaded -> static ok
+            const int16_t *src = (const int16_t *)res->data;
+            size_t total = res->data_size / sizeof(int16_t);
+            size_t off = 0;
+            while (off < total) {
+                size_t n = total - off;
+                if (n > 512) n = 512;
+                for (size_t i = 0; i < n; i++) {
+                    int32_t v = (int32_t)src[off + i] * BSP_SR_UPLINK_GAIN;
+                    if (v > 32767) v = 32767;
+                    else if (v < -32768) v = -32768;
+                    gbuf[i] = (int16_t)v;
+                }
+                s_audio_cb(gbuf, n);
+                off += n;
+            }
         }
         // Single-channel AFE signals WAKENET_DETECTED; multi-channel ("RMNM")
         // signals WAKENET_CHANNEL_VERIFIED after picking the best mic.

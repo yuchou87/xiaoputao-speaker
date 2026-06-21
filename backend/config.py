@@ -49,4 +49,4 @@ OUT_RATE = 24000     # device expects 24k downlink (it resamples 24k->16k)
 # Server VAD (energy-based) — end-of-utterance detection
 VAD_FRAME_MS = 20
 VAD_SILENCE_MS = 600     # silence after speech => utterance end
-VAD_ENERGY_THRESH = 500  # int16 RMS threshold for "speech"
+VAD_ENERGY_THRESH = 400  # int16 RMS threshold for "speech" (device applies ~12x uplink gain)

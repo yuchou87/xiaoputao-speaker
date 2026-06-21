@@ -418,10 +418,11 @@ esp_err_t glm_rt_send_audio(const int16_t *pcm16, size_t samples)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Uplink audio is disposable under backpressure: use a short timeout so a
-     * stalled socket can't block the uplink task for seconds. */
+    /* Tolerate WiFi jitter: too short a timeout makes the transport write time
+     * out, which esp_websocket_client escalates to a fatal error + disconnect.
+     * 1s is well within realtime tolerance while the backend drains continuously. */
     int sent = esp_websocket_client_send_text(s_client, json_str, strlen(json_str),
-                                              pdMS_TO_TICKS(150));
+                                              pdMS_TO_TICKS(1000));
     free(json_str);
 
     if (sent < 0) {
