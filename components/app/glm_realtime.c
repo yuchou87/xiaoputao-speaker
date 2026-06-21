@@ -285,14 +285,6 @@ esp_err_t glm_rt_start(void)
         return ESP_OK;
     }
 
-    /* --- Read GLM API key from NVS --- */
-    char glm_key[GLM_KEY_MAXLEN] = {0};
-    esp_err_t err = bsp_nvs_get_str(NVS_KEY_GLM_KEY, glm_key, sizeof(glm_key));
-    if (err != ESP_OK || glm_key[0] == '\0') {
-        ESP_LOGE(TAG, "NVS key '%s' missing or empty — cannot connect", NVS_KEY_GLM_KEY);
-        return ESP_ERR_INVALID_STATE;
-    }
-
     /* --- Read optional backend URL override --- */
     char url[GLM_URL_MAXLEN] = {0};
     if (bsp_nvs_has(NVS_KEY_BACKEND_URL)) {
@@ -303,6 +295,16 @@ esp_err_t glm_rt_start(void)
     }
     bool is_tls = (strncmp(url, "wss://", 6) == 0);
     ESP_LOGI(TAG, "connecting to %s (%s)", url, is_tls ? "TLS" : "plain");
+
+    /* --- Read GLM API key from NVS --- */
+    /* The cloud GLM endpoint (wss://) requires an API key. The local Mac
+       backend (plain ws://) ignores auth, so an empty key is allowed there. */
+    char glm_key[GLM_KEY_MAXLEN] = {0};
+    esp_err_t err = bsp_nvs_get_str(NVS_KEY_GLM_KEY, glm_key, sizeof(glm_key));
+    if (is_tls && (err != ESP_OK || glm_key[0] == '\0')) {
+        ESP_LOGE(TAG, "NVS key '%s' missing or empty — required for cloud (wss://)", NVS_KEY_GLM_KEY);
+        return ESP_ERR_INVALID_STATE;
+    }
 
     /* --- Configure WebSocket client --- */
     /* Only attach the cert bundle for wss:// (cloud GLM). The local Mac backend
@@ -321,13 +323,15 @@ esp_err_t glm_rt_start(void)
         return ESP_FAIL;
     }
 
-    /* --- Append auth header --- */
-    err = esp_websocket_client_append_header(s_client, "Authorization", glm_key);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to append Authorization header: %s", esp_err_to_name(err));
-        esp_websocket_client_destroy(s_client);
-        s_client = NULL;
-        return err;
+    /* --- Append auth header (only when a key is set; local ws:// needs none) --- */
+    if (glm_key[0] != '\0') {
+        err = esp_websocket_client_append_header(s_client, "Authorization", glm_key);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "failed to append Authorization header: %s", esp_err_to_name(err));
+            esp_websocket_client_destroy(s_client);
+            s_client = NULL;
+            return err;
+        }
     }
 
     /* --- Register event handler --- */
