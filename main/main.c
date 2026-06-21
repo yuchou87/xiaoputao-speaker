@@ -9,6 +9,7 @@
 #include "cst816.h"
 #include "bsp_audio.h"
 #include "bsp_sr.h"
+#include "bsp_battery.h"
 #include "lvgl.h"
 #include <math.h>
 
@@ -60,6 +61,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(bsp_exio_init());
     ESP_LOGI(TAG, "TCA9554 init ok");
+
+    bsp_battery_init();
+    ESP_LOGI(TAG, "battery: %.2f V", bsp_battery_voltage());
 
     // Display: ST77916 QSPI + backlight. LCD_Init() draws a color-bar test
     // pattern (test_draw_bitmap) so we can confirm the panel lights up.
