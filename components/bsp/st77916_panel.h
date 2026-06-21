@@ -43,7 +43,10 @@
 #define EXAMPLE_LCD_BK_LIGHT_ON_LEVEL       (1)
 #define EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL !EXAMPLE_LCD_BK_LIGHT_ON_LEVEL
 
-#define ESP_PANEL_HOST_SPI_MAX_TRANSFER_SIZE   (2048)
+/* Must be >= the LVGL flush buffer (W * BUF_LINES * 2 bytes = 360*40*2 = 28800),
+   otherwise esp_lcd chops each flush into many sub-transactions and overflows
+   trans_queue_depth -> "spi transmit (queue) color failed". */
+#define ESP_PANEL_HOST_SPI_MAX_TRANSFER_SIZE   (360 * 40 * 2 + 64)
 
 #define LEDC_HS_TIMER          LEDC_TIMER_0
 #define LEDC_LS_MODE           LEDC_LOW_SPEED_MODE
@@ -55,6 +58,7 @@
 #define Backlight_MAX   100      
 
 extern esp_lcd_panel_handle_t panel_handle;
+extern esp_lcd_panel_io_handle_t lcd_io_handle;
 extern uint8_t LCD_Backlight;
 
 void ST77916_Init();

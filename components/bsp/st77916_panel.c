@@ -9,6 +9,7 @@
 static const char *TAG_LCD = "ST77916";
 
 esp_lcd_panel_handle_t panel_handle = NULL;
+esp_lcd_panel_io_handle_t lcd_io_handle = NULL;
 
 
 static const st77916_lcd_init_cmd_t vendor_specific_init_new[] = {
@@ -327,6 +328,7 @@ int QSPI_Init(void){
     .vendor_config = (void *) &vendor_config,                                  
   };
   esp_lcd_new_panel_st77916(io_handle, &panel_config, &panel_handle);
+  lcd_io_handle = io_handle;   /* expose for LVGL flush-done callback */
 
   esp_lcd_panel_reset(panel_handle);
   esp_lcd_panel_init(panel_handle);
