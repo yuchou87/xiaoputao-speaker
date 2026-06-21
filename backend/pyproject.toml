@@ -9,6 +9,7 @@ dependencies = [
     "openai>=1.40",        # DeepSeek (OpenAI-compatible) LLM
     "soundfile>=0.12",
     "scipy>=1.13",         # resample
+    "mlx-audio>=0.4.4",
 ]
 
 [tool.uv]

@@ -23,6 +23,16 @@ DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
+SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT",
+    "你是「小葡萄」，一个友好、风趣的中文语音助手，运行在用户家里的智能音箱上。"
+    "回答简洁口语化，单次回复控制在100字内，适合语音播报。会讲故事和笑话。")
+
+# mlx-audio models / voices (downloaded from HuggingFace on first use)
+STT_MODEL = os.environ.get("STT_MODEL", "mlx-community/whisper-large-v3-turbo")
+TTS_MODEL = os.environ.get("TTS_MODEL", "mlx-community/Kokoro-82M-bf16")
+TTS_LANG = os.environ.get("TTS_LANG", "z")          # Kokoro: 'z' = Mandarin
+TTS_VOICE = os.environ.get("TTS_VOICE", "zf_xiaobei")  # Chinese female
+
 # Audio
 IN_RATE = 16000      # device uplink PCM16 16k mono
 OUT_RATE = 24000     # device expects 24k downlink (it resamples 24k->16k)
