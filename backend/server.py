@@ -46,6 +46,8 @@ async def handler(ws):
     had_speech = False
     silence_ms = 0
     busy = False   # a turn is being produced; keep draining the socket but drop audio
+    dbg_peak = 0.0   # peak RMS seen since last debug print
+    dbg_ms = 0       # ms of audio accumulated since last debug print
 
     async def process(utterance):
         nonlocal busy
@@ -78,9 +80,18 @@ async def handler(ws):
                 if pcm.size == 0:
                     continue
                 frame_ms = pcm.size * 1000 // config.IN_RATE
-                if rms(pcm) >= config.VAD_ENERGY_THRESH:
+                level = rms(pcm)
+                # --- diagnostics: peak RMS vs threshold, ~1s cadence ---
+                dbg_peak = max(dbg_peak, level)
+                dbg_ms += frame_ms
+                if dbg_ms >= 1000:
+                    print(f"  [vad] peak RMS {dbg_peak:6.0f} / thresh {config.VAD_ENERGY_THRESH} "
+                          f"{'SPEECH' if dbg_peak >= config.VAD_ENERGY_THRESH else 'silence'}")
+                    dbg_peak, dbg_ms = 0.0, 0
+                if level >= config.VAD_ENERGY_THRESH:
                     if not had_speech:
                         had_speech = True
+                        print("  [vad] speech_started")
                         await ws.send(evt("input_audio_buffer.speech_started"))
                     buf.append(pcm)
                     silence_ms = 0
@@ -88,6 +99,7 @@ async def handler(ws):
                     buf.append(pcm)
                     silence_ms += frame_ms
                     if silence_ms >= config.VAD_SILENCE_MS:
+                        print("  [vad] speech_stopped -> running pipeline")
                         await ws.send(evt("input_audio_buffer.speech_stopped"))
                         utterance = np.concatenate(buf)
                         buf, had_speech, silence_ms = [], False, 0
