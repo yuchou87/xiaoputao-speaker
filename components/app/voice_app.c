@@ -222,19 +222,36 @@ static void audio_out_wrapper(const uint8_t *pcm16, size_t len)
 }
 
 /* Dedicated downlink task: drain the ringbuffer and play (may block on codec). */
+/* Jitter buffer: accumulate this many bytes (24kHz PCM16) before starting to
+ * play a reply, so WiFi delivery jitter doesn't underrun the codec (stutter). */
+#define DOWNLINK_PREBUF_BYTES  (24000 * 2 / 2)   /* ~0.5s @24k */
+
 static void downlink_task(void *arg)
 {
     (void)arg;
+    bool playing = false;
     for (;;) {
+        if (!playing) {
+            /* Wait until enough audio is buffered to ride out jitter. */
+            size_t fill = DOWNLINK_RB_BYTES - xRingbufferGetCurFreeSize(s_downlink_rb);
+            if (fill < DOWNLINK_PREBUF_BYTES) {
+                vTaskDelay(pdMS_TO_TICKS(15));
+                continue;
+            }
+            playing = true;
+        }
         size_t n = 0;
         uint8_t *bytes = (uint8_t *)xRingbufferReceiveUpTo(
-            s_downlink_rb, &n, portMAX_DELAY, DOWNLINK_DRAIN_MAX);
+            s_downlink_rb, &n, pdMS_TO_TICKS(150), DOWNLINK_DRAIN_MAX);
         if (bytes) {
             if (n > 0) {
                 s_last_activity_us = esp_timer_get_time();
                 glm_audio_out_play(bytes, n);
             }
             vRingbufferReturnItem(s_downlink_rb, bytes);
+        } else {
+            /* Drained dry (reply finished or a gap) -> re-prebuffer next time. */
+            playing = false;
         }
     }
 }
