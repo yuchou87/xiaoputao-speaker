@@ -10,23 +10,37 @@ import numpy as np
 import soundfile as sf
 import websockets
 
-from audio_utils import b64_to_pcm16, pcm16_to_b64
+from audio_utils import b64_to_pcm16, pcm16_to_b64, resample_pcm16
 import config
 
 
+def _build_utterance() -> np.ndarray:
+    """Utterance to send. Pass a .wav arg for a REAL speech test (it's
+    resampled to 16k); otherwise 1s noise (just exercises the protocol)."""
+    wav = next((a for a in sys.argv[1:] if a.endswith(".wav")), None)
+    if wav:
+        pcm, sr = sf.read(wav, dtype="int16")
+        if pcm.ndim > 1:
+            pcm = pcm[:, 0]
+        pcm = resample_pcm16(pcm, sr, config.IN_RATE)
+        print(f"utterance from {wav}: {pcm.size} samples @16k")
+        silence = np.zeros(int(config.IN_RATE * 0.8), dtype=np.int16)
+        return np.concatenate([pcm, silence])
+    rng = np.random.default_rng(0)
+    speech = (rng.normal(0, 4000, config.IN_RATE).clip(-32768, 32767)).astype(np.int16)
+    silence = np.zeros(int(config.IN_RATE * 0.8), dtype=np.int16)
+    return np.concatenate([speech, silence])
+
+
 async def main():
-    uri = sys.argv[1] if len(sys.argv) > 1 else f"ws://127.0.0.1:{config.WS_PORT}"
+    uri = next((a for a in sys.argv[1:] if a.startswith("ws")), f"ws://127.0.0.1:{config.WS_PORT}")
     async with websockets.connect(uri, max_size=8 * 1024 * 1024) as ws:
         await ws.send(json.dumps({"type": "session.update", "session": {
             "model": "glm-realtime", "input_audio_format": "pcm16",
             "output_audio_format": "pcm", "voice": "tongtong",
             "turn_detection": {"type": "server_vad"}}}))
 
-        # Fake utterance: 1s of loud noise (speech) then 0.8s silence.
-        rng = np.random.default_rng(0)
-        speech = (rng.normal(0, 4000, config.IN_RATE).clip(-32768, 32767)).astype(np.int16)
-        silence = np.zeros(int(config.IN_RATE * 0.8), dtype=np.int16)
-        stream = np.concatenate([speech, silence])
+        stream = _build_utterance()
         frame = config.IN_RATE * 20 // 1000  # 20ms
         for i in range(0, len(stream), frame):
             await ws.send(json.dumps({"type": "input_audio_buffer.append",
