@@ -107,6 +107,15 @@ void app_main(void)
         if (rec) {
             ESP_LOGI(TAG, "recording 3s from mic... (speak now)");
             bsp_audio_read(rec, n);
+            // Diagnostic: is the mic capturing anything? (read over serial)
+            int32_t peak = 0; int64_t sumsq = 0;
+            for (size_t i = 0; i < n; i++) {
+                int32_t v = rec[i]; if (v < 0) v = -v;
+                if (v > peak) peak = v;
+                sumsq += (int64_t) rec[i] * rec[i];
+            }
+            ESP_LOGI(TAG, "MIC STATS: peak=%d rms=%d (0=dead mic)",
+                     (int) peak, (int) (sumsq / n > 0 ? (int) __builtin_sqrt((double)(sumsq / n)) : 0));
             ESP_LOGI(TAG, "playing recording back");
             bsp_audio_play(rec, n);
             ESP_LOGI(TAG, "loopback done");

@@ -11,6 +11,7 @@
 - **esp_codec_dev 地址**：要 8-bit 形式（ES8311 0x18→**0x30**，ES7210 0x40→**0x80**），内部右移。
 - **esp-sr 2.4.6**：无 `USE_AFE/USE_WAKENET/MODEL_IN_SPIFFS` 符号（AFE/WakeNet 恒编入）；唤醒词符号是 `CONFIG_SR_WN_WN9S_NIHAOXIAOZHI`；`esp_afe_handle_from_config` 在 `esp_afe_sr_models.h`。
 - **sdkconfig.defaults 只在无 sdkconfig 时生效**——改完要 `rm sdkconfig` 重生成。
+- **喇叭功放使能 = GPIO15 拉高**（NS4150B）。bsp_board 的 `GPIO_PWR_CTRL=-1` + PA 初始化注释掉，对本板是错的；以 Waveshare Arduino 例子 `digitalWrite(15,HIGH)` 为准。设 `es8311_codec_cfg.pa_pin = 15`。**调试教训**：mic 好但喇叭哑 → 输出模拟链；不是格式/MCLK，是功放没使能。麦克风走 ES7210 不经功放，所以一直正常。
 
 ## 完成情况（软件层已自验证；物理现象待统一测试）
 

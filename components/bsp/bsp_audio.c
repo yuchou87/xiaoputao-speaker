@@ -29,9 +29,12 @@ esp_err_t bsp_audio_init(void)
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     ESP_ERROR_CHECK(i2s_new_channel(&cc, &s_tx, &s_rx));
 
+    // This board's ES8311/ES7210 are clocked for 32-bit STEREO I2S slots
+    // (matches the working demo's I2S_CONFIG_DEFAULT). esp_codec_dev bridges
+    // the per-codec open format (16/mono) to this 32/stereo slot.
     i2s_std_config_t std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_MCLK, .bclk = I2S_BCLK, .ws = I2S_WS,
             .dout = I2S_DOUT, .din = I2S_DIN,
@@ -54,8 +57,8 @@ esp_err_t bsp_audio_init(void)
         .ctrl_if = ctrl,
         .gpio_if = gpio,
         .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
-        .pa_pin = -1,            // NS4150B amp: no GPIO enable on this board (HW-on)
-        .use_mclk = true,
+        .pa_pin = 15,            // NS4150B amp enable = GPIO15 HIGH (from Waveshare Arduino demo: digitalWrite(15,HIGH))
+        .use_mclk = true,        // MCLK (GPIO2) is wired to the codec; Waveshare's Arduino audio demo uses it
         .master_mode = false,    // ESP32 is I2S master; codec is slave
     };
     const audio_codec_if_t *codec = es8311_codec_new(&es);
@@ -67,9 +70,11 @@ esp_err_t bsp_audio_init(void)
     s_out = esp_codec_dev_new(&dc);
     if (!s_out) { ESP_LOGE(TAG, "esp_codec_dev_new(out) failed"); return ESP_FAIL; }
     esp_codec_dev_set_out_vol(s_out, 70);
-    esp_codec_dev_sample_info_t fs = { .sample_rate = SAMPLE_RATE, .channel = 1, .bits_per_sample = 16 };
+    // Open at the native slot format (32-bit stereo) to avoid relying on
+    // esp_codec_dev's output up-conversion (which produced silence at 16/mono).
+    esp_codec_dev_sample_info_t fs = { .sample_rate = SAMPLE_RATE, .channel = 2, .bits_per_sample = 32 };
     if (esp_codec_dev_open(s_out, &fs) != 0) { ESP_LOGE(TAG, "open(out) failed"); return ESP_FAIL; }
-    ESP_LOGI(TAG, "ES8311 output ready (16k/16/mono)");
+    ESP_LOGI(TAG, "ES8311 output ready (16k/32/stereo)");
 
     // --- Input: ES7210 ADC (mic1) ---
     audio_codec_i2c_cfg_t ic2 = { .port = 0, .addr = ES7210_ADDR, .bus_handle = bsp_i2c_bus() };
@@ -103,8 +108,22 @@ esp_err_t bsp_audio_read(int16_t *pcm, size_t samples)
 
 esp_err_t bsp_audio_play(const int16_t *pcm, size_t samples)
 {
-    int r = esp_codec_dev_write(s_out, (void *) pcm, samples * sizeof(int16_t));
-    return r == 0 ? ESP_OK : ESP_FAIL;
+    // Convert caller's 16-bit mono to the codec's 32-bit stereo format.
+    static int32_t buf[512 * 2];
+    size_t i = 0;
+    while (i < samples) {
+        size_t chunk = samples - i;
+        if (chunk > 512) chunk = 512;
+        for (size_t k = 0; k < chunk; k++) {
+            int32_t v = ((int32_t) pcm[i + k]) << 16;   // 16-bit -> 32-bit
+            buf[k * 2] = v;        // L
+            buf[k * 2 + 1] = v;    // R
+        }
+        int r = esp_codec_dev_write(s_out, buf, chunk * 2 * sizeof(int32_t));
+        if (r != 0) return ESP_FAIL;
+        i += chunk;
+    }
+    return ESP_OK;
 }
 
 void bsp_audio_set_volume(int pct)
